@@ -2,9 +2,11 @@
 
 ## Reporting a vulnerability
 
-Please report vulnerabilities privately to the maintainers (contact to be published with the
-repository). Do not open public issues for security problems. Include affected version, impact
-and reproduction steps without real credentials or customer data.
+Please report vulnerabilities privately, not in public issues. On the repository's GitHub page
+open **Security → Report a vulnerability**: the report is visible only to you and the
+maintainers. If that button is not shown, open an issue that says only that you have a security
+report, without any details, and a maintainer will arrange a private channel. Include affected
+version, impact and reproduction steps without real credentials or customer data.
 
 ## Security model (summary)
 

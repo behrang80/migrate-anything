@@ -1,7 +1,7 @@
 # Migrate Anything — Architecture
 
-Status: v1.0 release candidate. This document describes what is implemented. Where something is
-designed-for but not implemented, it says so explicitly.
+Status: in development (working version 1.0.0-rc.1, not released). This document describes what
+is implemented. Where something is designed-for but not implemented, it says so explicitly.
 
 ## 1. Goals and non-goals
 

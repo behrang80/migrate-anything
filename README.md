@@ -13,7 +13,7 @@
   <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20on%20your%20machine-00c853?style=flat-square&labelColor=020604">
   <img alt="MCP server included" src="https://img.shields.io/badge/MCP-server%20included-00c853?style=flat-square&labelColor=020604">
   <img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-00c853?style=flat-square&labelColor=020604">
-  <img alt="Status: release candidate" src="https://img.shields.io/badge/status-v1.0.0--rc.1-ffd166?style=flat-square&labelColor=020604">
+  <img alt="Status: in development" src="https://img.shields.io/badge/status-in%20development-ffd166?style=flat-square&labelColor=020604">
 </p>
 
 <p align="center">
@@ -29,8 +29,10 @@
 
 ## Start in two steps
 
-> **Status:** release candidate `v1.0.0-rc.1`, verified on Windows. There are no ready-made
-> downloads yet, so the first start builds from source.
+> **Status:** in development. Nothing has been released yet: `1.0.0-rc.1` is a working version
+> number, and things can still change. Verified on Windows. Until there is a release, try it
+> against test systems or copies of your data. There are no ready-made downloads yet, so the
+> first start builds from source.
 
 You need [Rust](https://rustup.rs) once, to build it (on Windows the installer also sets up the
 Microsoft C++ build tools).

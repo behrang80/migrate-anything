@@ -16,6 +16,8 @@ private information, and sustained disruption.
 
 ## Enforcement
 
-Report concerns privately to the maintainers (contact to be published with the repository).
+To report a concern, use GitHub's **Report content** option on the comment, issue or profile
+concerned (the report goes to GitHub and is not public), or open an issue that asks a maintainer
+to get in touch, without details. The project has no private contact address yet.
 Maintainers may remove content and restrict participation. This code applies in all project
 spaces. It is adapted in spirit from the Contributor Covenant.

@@ -1,0 +1,4 @@
+org_id,org_name,industry,website,annual_revenue,cf_tier,created_on
+1,Northwind Traders AB,Retail,https://northwind.example,1250000.00,gold,2019-03-14
+2,"Contoso, Ltd",Manufacturing,https://contoso.example,980000.50,silver,2020-07-01
+3,Fabrikam GmbH,Software,https://fabrikam.example,,bronze,2021-11-23

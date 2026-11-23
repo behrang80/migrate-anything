@@ -1,0 +1,357 @@
+{
+  "mapping_version": 1,
+  "objects": [
+    {
+      "source_object": "contacts",
+      "target_object": "contacts",
+      "target_key_field": "contact_id",
+      "fields": [
+        {
+          "target": "cf_linkedin",
+          "expr": {
+            "op": "field",
+            "path": "cf_linkedin"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "contact_id",
+          "expr": {
+            "op": "field",
+            "path": "contact_id"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "email",
+          "expr": {
+            "op": "field",
+            "path": "email"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "first_name",
+          "expr": {
+            "op": "field",
+            "path": "first_name"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "last_name",
+          "expr": {
+            "op": "field",
+            "path": "last_name"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "manager_id",
+          "expr": {
+            "op": "field",
+            "path": "manager_id"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "org_id",
+          "expr": {
+            "op": "field",
+            "path": "org_id"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "phone",
+          "expr": {
+            "op": "field",
+            "path": "phone"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        }
+      ],
+      "unmapped_fields": "archive",
+      "skip_fields": [],
+      "write_mode": "upsert"
+    },
+    {
+      "source_object": "opportunities",
+      "target_object": "opportunities",
+      "target_key_field": "opp_id",
+      "fields": [
+        {
+          "target": "amount",
+          "expr": {
+            "op": "field",
+            "path": "amount"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "close_date",
+          "expr": {
+            "op": "field",
+            "path": "close_date"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "contact_id",
+          "expr": {
+            "op": "field",
+            "path": "contact_id"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "currency",
+          "expr": {
+            "op": "field",
+            "path": "currency"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "opp_id",
+          "expr": {
+            "op": "field",
+            "path": "opp_id"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "org_id",
+          "expr": {
+            "op": "field",
+            "path": "org_id"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "stage",
+          "expr": {
+            "op": "field",
+            "path": "stage"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "title",
+          "expr": {
+            "op": "field",
+            "path": "title"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        }
+      ],
+      "unmapped_fields": "archive",
+      "skip_fields": [],
+      "write_mode": "upsert"
+    },
+    {
+      "source_object": "organizations",
+      "target_object": "organizations",
+      "target_key_field": "org_id",
+      "fields": [
+        {
+          "target": "annual_revenue",
+          "expr": {
+            "op": "field",
+            "path": "annual_revenue"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "cf_tier",
+          "expr": {
+            "op": "field",
+            "path": "cf_tier"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "created_on",
+          "expr": {
+            "op": "field",
+            "path": "created_on"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "industry",
+          "expr": {
+            "op": "field",
+            "path": "industry"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "org_id",
+          "expr": {
+            "op": "field",
+            "path": "org_id"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "org_name",
+          "expr": {
+            "op": "field",
+            "path": "org_name"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        },
+        {
+          "target": "website",
+          "expr": {
+            "op": "field",
+            "path": "website"
+          },
+          "confidence": 1.0,
+          "status": "accepted",
+          "explanation": "copied 1:1 into a new destination object",
+          "evidence": [
+            "destination creates objects on write"
+          ],
+          "deferred": false
+        }
+      ],
+      "unmapped_fields": "archive",
+      "skip_fields": [],
+      "write_mode": "upsert"
+    }
+  ]
+}

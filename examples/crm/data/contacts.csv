@@ -1,0 +1,5 @@
+contact_id,org_id,first_name,last_name,email,phone,cf_linkedin,manager_id
+C00001,1,Ann,Lee,ann@northwind.example,+46 70 111 22 33,https://linkedin.example/in/annlee,
+C00002,1,Søren,Berg,soren@northwind.example,+46 70 222 33 44,,C00001
+C00003,2,Zoë,Núñez,,+34 600 111 222,https://linkedin.example/in/zoe,
+C00004,3,Omar,O'Brien,omar@fabrikam.example,,,

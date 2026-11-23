@@ -1,0 +1,101 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.100.0", components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.100.0" }
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit, integration, end-to-end and security tests (PostgreSQL demos skip without a server)
+        run: cargo test --workspace --locked
+
+  postgres-e2e:
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ma_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ma_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MA_TEST_PG_URL: postgres://ma_test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.100.0" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked -- --test-threads 4
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.100.0" }
+      - name: Dependency audit (RustSec advisories)
+        run: cargo install cargo-audit --locked && cargo audit
+      - name: Licenses and banned crates
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with: { command: check licenses bans sources }
+      - name: Secret scanning
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+  build-release:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.100.0", targets: "${{ matrix.target }}" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p migrate-anything --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: migrate-anything-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/migrate-anything*
+
+  benchmark-smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.100.0" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run --release --locked -p ma-bench -- --quick

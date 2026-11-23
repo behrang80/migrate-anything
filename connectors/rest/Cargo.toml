@@ -1,0 +1,24 @@
+[package]
+name = "ma-connector-rest"
+description = "Trusted runtime that executes declarative REST connector specifications."
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+chrono.workspace = true
+ma-connector-sdk.workspace = true
+ma-security.workspace = true
+ma-types.workspace = true
+percent-encoding = "2.3.2"
+reqwest = { workspace = true, features = ["rustls-no-provider"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

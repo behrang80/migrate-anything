@@ -1,0 +1,22 @@
+# Local playground: Migrate Anything + a disposable PostgreSQL for the demos.
+# Usage:
+#   docker compose up -d postgres
+#   docker compose run --rm migrate doctor
+#   docker compose run --rm -e MA_TEST_PG_URL=postgres://ma:ma@postgres:5432/postgres migrate ...
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ma
+      POSTGRES_PASSWORD: ma   # local test value only
+    ports: ["127.0.0.1:55432:5432"]
+  migrate:
+    build: .
+    volumes:
+      - ma-home:/home/migrate/.migrate-anything
+      - ./examples:/data/examples:ro
+    depends_on: [postgres]
+    stdin_open: true   # required for `mcp serve` and interactive approvals
+    tty: true
+volumes:
+  ma-home:

@@ -1,0 +1,8 @@
+/target
+/.local
+*.db
+*.db-wal
+*.db-shm
+.migrate-anything/
+.env
+.claude/settings.local.json

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "migrate-anything": {
+      "command": "migrate-anything",
+      "args": ["mcp", "serve"],
+      "env": { "MA_HOME": "${HOME}/.migrate-anything" }
+    }
+  }
+}

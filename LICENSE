@@ -1,0 +1,11 @@
+Copyright (c) 2026 The Migrate Anything owner. All rights reserved.
+
+LICENSE NOT YET SELECTED.
+
+This repository is a release candidate prepared for owner review. No license has been granted.
+Until the owner selects and publishes a license, no permission is given to use, copy, modify,
+distribute or sublicense this software, except as required for the owner's own review.
+
+See docs/LICENSE_DECISION_CHECKLIST.md.
+
+Third-party dependencies remain under their own licenses (see Cargo.lock and `cargo deny list`).

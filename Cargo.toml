@@ -1,0 +1,94 @@
+﻿[workspace]
+resolver = "3"
+members = [
+    "apps/cli",
+    "apps/mcp-server",
+    "crates/types",
+    "crates/connector-sdk",
+    "crates/security",
+    "crates/persistence",
+    "crates/connector-factory",
+    "crates/sandbox",
+    "crates/mapping-engine",
+    "crates/planning-engine",
+    "crates/execution-engine",
+    "crates/validation-engine",
+    "crates/core",
+    "connectors/files",
+    "connectors/postgres",
+    "connectors/rest",
+    "examples/example-api",
+    "benchmarks",
+]
+default-members = ["apps/cli", "apps/mcp-server"]
+
+[workspace.package]
+version = "1.0.0-rc.1"
+edition = "2024"
+license-file = "LICENSE"
+publish = false
+
+[workspace.dependencies]
+# internal
+ma-types = { path = "crates/types" }
+ma-connector-sdk = { path = "crates/connector-sdk" }
+ma-security = { path = "crates/security" }
+ma-persistence = { path = "crates/persistence" }
+ma-connector-factory = { path = "crates/connector-factory" }
+ma-sandbox = { path = "crates/sandbox" }
+ma-mapping = { path = "crates/mapping-engine" }
+ma-planning = { path = "crates/planning-engine" }
+ma-execution = { path = "crates/execution-engine" }
+ma-validation = { path = "crates/validation-engine" }
+ma-core = { path = "crates/core" }
+ma-connector-files = { path = "connectors/files" }
+ma-connector-postgres = { path = "connectors/postgres" }
+ma-connector-rest = { path = "connectors/rest" }
+ma-mcp = { path = "apps/mcp-server" }
+ma-example-api = { path = "examples/example-api" }
+
+# external
+anyhow = "1.0.105"
+async-trait = "0.1.92"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
+base64 = "0.23.1"
+chacha20poly1305 = "0.11.0"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
+clap = { version = "4.6.9", features = ["derive", "env"] }
+csv = "1.4.0"
+encoding_rs = "0.8.44"
+futures = "0.3.34"
+getrandom = "0.4.3"
+hex = "0.4.3"
+hmac = "0.13.0"
+ipnet = "2.12.2"
+proptest = "1.12.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
+rmcp = { version = "3.11.0", features = ["server", "transport-io", "macros"] }
+schemars = { version = "1.2.3", features = ["chrono04", "uuid1"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+serde_norway = "0.9.42"
+sha2 = "0.11.1"
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "macros", "migrate"] }
+strsim = "0.11.1"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+url = "2.5.9"
+uuid = { version = "1.29.3", features = ["v4", "serde"] }
+wasmtime = { version = "51.0.0", default-features = false, features = ["cranelift", "runtime", "wat", "std"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+debug = "line-tables-only"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"

@@ -1,0 +1,6 @@
+[
+  {"invoice_id": 1, "invoice_no": "INV-2024-00001", "customer_no": "K0001", "currency": "SEK", "issue_date": "03.05.2024", "total": 1234.50, "status": "paid",
+   "audit_trail": [{"at": "2024-05-03T09:00:00Z", "by": "clerk-1", "event": "created"}]},
+  {"invoice_id": 2, "invoice_no": "INV-2024-00002", "customer_no": "K0002", "currency": "XXX", "issue_date": "04.05.2024", "total": 99.90, "status": "open",
+   "audit_trail": []}
+]

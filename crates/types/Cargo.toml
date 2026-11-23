@@ -1,0 +1,22 @@
+[package]
+name = "ma-types"
+description = "Shared contracts for Migrate Anything: canonical records, manifests, specs, plans, reports."
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

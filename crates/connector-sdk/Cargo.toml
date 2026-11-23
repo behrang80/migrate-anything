@@ -1,0 +1,16 @@
+[package]
+name = "ma-connector-sdk"
+description = "Connector traits and helpers for Migrate Anything."
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+ma-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

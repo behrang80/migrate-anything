@@ -1,0 +1,26 @@
+[package]
+name = "ma-connector-postgres"
+description = "PostgreSQL source and destination connector for Migrate Anything."
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+chrono.workspace = true
+ma-connector-sdk.workspace = true
+ma-types.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["postgres", "tls-rustls-ring"] }
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

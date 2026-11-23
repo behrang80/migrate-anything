@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "apps/cli",
     "apps/mcp-server",
+    "apps/ui-server",
     "crates/types",
     "crates/connector-sdk",
     "crates/security",
@@ -45,6 +46,7 @@ ma-connector-files = { path = "connectors/files" }
 ma-connector-postgres = { path = "connectors/postgres" }
 ma-connector-rest = { path = "connectors/rest" }
 ma-mcp = { path = "apps/mcp-server" }
+ma-ui = { path = "apps/ui-server" }
 ma-example-api = { path = "examples/example-api" }
 
 # external

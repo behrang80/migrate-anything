@@ -54,3 +54,84 @@ impl OperatorConsent {
         Ok(OperatorConsent { operator: operator.to_string(), method: "test-harness" })
     }
 }
+
+/// Proof that this process was started by a human from an interactive terminal.
+///
+/// The local web UI ("Studio") uses it for approvals: the server prints a one-time code on the
+/// terminal it was started from and the operator types that code into the browser. An agent that
+/// drives only the browser cannot see the terminal, and an agent that starts the UI from a
+/// non-interactive shell does not get a session at all, so approvals stay with the human.
+#[derive(Debug)]
+pub struct InteractiveSession {
+    _private: (),
+}
+
+/// How long a printed approval code stays valid.
+const CHALLENGE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const CHALLENGE_ATTEMPTS: u8 = 5;
+
+impl InteractiveSession {
+    /// Succeeds only when both stdin and stderr are terminals.
+    pub fn from_terminal() -> MaResult<InteractiveSession> {
+        if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+            return Err(MaError::policy("approvals need a process started from an interactive terminal; this one was started without one"));
+        }
+        Ok(InteractiveSession { _private: () })
+    }
+
+    /// Test-only session (see [`OperatorConsent::for_tests`]).
+    #[cfg(feature = "test-approval")]
+    pub fn for_tests() -> MaResult<InteractiveSession> {
+        if std::env::var("MA_INSECURE_TEST_APPROVAL").as_deref() != Ok("1") {
+            return Err(MaError::policy("test approval is disabled"));
+        }
+        Ok(InteractiveSession { _private: () })
+    }
+
+    /// Print a fresh one-time code on the terminal for `what` and return the pending challenge.
+    pub fn challenge(&self, what: &str) -> Challenge {
+        let code = ma_security::random_hex(3).to_uppercase();
+        let mut err = std::io::stderr();
+        let line = "=".repeat(64);
+        writeln!(err, "\n{line}\n  APPROVAL REQUESTED in Migrate Anything Studio\n  {what}\n\n  Type this code in the browser to approve:   {code}\n  (valid for 5 minutes; ignore it if you did not ask for this)\n{line}").ok();
+        err.flush().ok();
+        Challenge { code, created: std::time::Instant::now(), attempts_left: CHALLENGE_ATTEMPTS }
+    }
+}
+
+/// A one-time approval code that was shown on the operator's terminal.
+#[derive(Debug)]
+pub struct Challenge {
+    code: String,
+    created: std::time::Instant,
+    attempts_left: u8,
+}
+
+impl Challenge {
+    pub fn is_expired(&self) -> bool {
+        self.created.elapsed() > CHALLENGE_TTL || self.attempts_left == 0
+    }
+
+    /// Check the code the operator typed. A wrong code uses up one of the attempts.
+    pub fn confirm(&mut self, typed: &str) -> MaResult<OperatorConsent> {
+        if self.is_expired() {
+            return Err(MaError::policy("this approval code has expired; request a new one"));
+        }
+        let typed: String = typed.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase();
+        if typed != self.code {
+            self.attempts_left -= 1;
+            return Err(MaError::policy(format!(
+                "that code does not match the one shown in the terminal ({} attempt(s) left)",
+                self.attempts_left
+            )));
+        }
+        self.attempts_left = 0; // single use
+        Ok(OperatorConsent { operator: ma_security::os_operator(), method: "terminal-code-via-local-ui" })
+    }
+
+    /// Test-only access to the code that was "shown on the terminal".
+    #[cfg(feature = "test-approval")]
+    pub fn code_for_tests(&self) -> &str {
+        &self.code
+    }
+}

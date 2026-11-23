@@ -20,7 +20,7 @@ use ma_security::keys::{self, Key};
 use ma_types::*;
 use serde_json::json;
 
-pub use consent::OperatorConsent;
+pub use consent::{Challenge, InteractiveSession, OperatorConsent};
 pub use requests::*;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -37,6 +37,8 @@ pub struct App {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Actor {
     Cli,
+    /// The operator working through the local web UI.
+    Ui,
     Mcp,
     Worker,
 }
@@ -45,6 +47,7 @@ impl Actor {
     pub fn label(self) -> String {
         match self {
             Actor::Cli => format!("cli:{}", ma_security::os_operator()),
+            Actor::Ui => format!("ui:{}", ma_security::os_operator()),
             Actor::Mcp => "mcp-agent".into(),
             Actor::Worker => format!("worker:{}", std::process::id()),
         }
@@ -123,8 +126,20 @@ impl App {
                 )));
             }
         }
+        let mut c = c;
         match c.kind.as_str() {
-            "files" | "postgres" => {}
+            "files" => {
+                // Store an absolute path: a relative one would silently point somewhere else
+                // when a worker or the MCP server runs from a different directory.
+                let p = c
+                    .settings
+                    .get("path")
+                    .and_then(|p| p.as_str())
+                    .ok_or_else(|| MaError::validation("file connections need settings.path (a folder)"))?;
+                let abs = std::path::absolute(p).map_err(|e| MaError::validation(format!("invalid path `{p}`: {e}")))?;
+                c.settings["path"] = json!(abs.to_string_lossy());
+            }
+            "postgres" => {}
             "rest" => {
                 let base = c
                     .settings
@@ -852,7 +867,37 @@ impl App {
     }
 
     /// Execute a job in this process (used by `worker run` and tests).
+    ///
+    /// A failure before the job actually starts (expired approval, a connection that no longer
+    /// matches the plan, an unreachable system) is recorded on the job, so `jobs status`, the UI
+    /// and MCP clients show why nothing is happening instead of a job that stays "pending".
     pub async fn run_worker(&self, job_id: &str) -> MaResult<RunEnd> {
+        let runner = match self.prepare_runner(job_id).await {
+            Ok(r) => r,
+            Err(e) => {
+                self.record_start_failure(job_id, &e).await;
+                return Err(e);
+            }
+        };
+        runner.run().await
+    }
+
+    async fn record_start_failure(&self, job_id: &str, e: &MaError) {
+        let Ok(job) = self.store.get_job(job_id).await else { return };
+        if job.status.is_terminal() {
+            return;
+        }
+        // never touch a job that another live worker is running
+        let live = matches!(self.store.lease_state(job_id).await, Ok((Some(_), Some(exp))) if exp > chrono::Utc::now().timestamp_millis());
+        if live {
+            return;
+        }
+        let msg = format!("the worker could not start: {}", e.message);
+        let _ = self.store.set_job_status(job_id, JobStatus::Failed, Some(&msg)).await;
+        let _ = self.store.audit(&Actor::Worker.label(), "job.start_failed", Some(job_id), json!({"error": e.message})).await;
+    }
+
+    async fn prepare_runner(&self, job_id: &str) -> MaResult<JobRunner> {
         let job = self.store.get_job(job_id).await?;
         let sp = self.store.get_plan(&job.plan_id).await?;
         if sp.plan_hash != job.plan_hash || sp.plan.compute_hash() != job.plan_hash {
@@ -876,7 +921,7 @@ impl App {
             lease: Duration::from_secs(lease_secs.max(1)),
             lease_lost: Default::default(),
         };
-        runner.run().await
+        Ok(runner)
     }
 
     pub async fn job_status(&self, job_id: &str) -> MaResult<JobInfo> {

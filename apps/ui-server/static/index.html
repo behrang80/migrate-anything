@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Migrate Anything Studio</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <canvas id="rain" aria-hidden="true"></canvas>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="topbar">
+      <a class="brand" href="#/" aria-label="Migrate Anything Studio, home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M5 3v9M5 16v2M10 6v5M10 15v6M15 3v4M15 11v9M20 5v8M20 17v3" />
+        </svg>
+        <span>MIGRATE ANYTHING <small>studio</small></span>
+      </a>
+      <nav aria-label="Main">
+        <a class="navlink" href="#/" data-nav="home">Home</a>
+        <a class="navlink" href="#/new" data-nav="new">New migration</a>
+      </nav>
+      <span class="spacer"></span>
+      <span id="approval-pill"></span>
+      <button class="btn ghost small" id="motion-toggle" type="button" aria-pressed="true">Animation: on</button>
+    </header>
+    <main id="main" tabindex="-1">
+      <p class="dim">Loading…</p>
+    </main>
+    <div id="toasts" role="status" aria-live="polite"></div>
+    <noscript><p style="padding: 24px">Migrate Anything Studio needs JavaScript. You can use the command line instead: <code>migrate-anything --help</code>.</p></noscript>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>

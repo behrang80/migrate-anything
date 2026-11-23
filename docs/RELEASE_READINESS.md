@@ -1,6 +1,7 @@
 # Release readiness report — 1.0.0-rc.1
 
-Date: 2026-11-23 · Prepared for owner review · **Not committed, not pushed, not published.**
+Date: 2026-11-23 · Prepared for owner review · Pushed to a private GitHub repository; **no
+release published**. Studio (the web interface) was added after the first candidate build.
 
 ## Verdict
 
@@ -23,33 +24,36 @@ GitHub (not executable here), Linux/macOS verification, dependency audit executi
 |---|---|
 | `cargo fmt --all -- --check` | ✅ clean |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ clean |
-| `MA_TEST_PG_URL=postgres://ma_test@127.0.0.1:55432/postgres cargo test --workspace` | ✅ **78 passed, 0 failed** (74 before the code review; 4 regression tests added with its fixes) |
+| `MA_TEST_PG_URL=postgres://ma_test@127.0.0.1:55432/postgres cargo test --workspace` | ✅ **82 passed, 0 failed** (74 in the first candidate; 4 regression tests added with the code-review fixes; 1 mapping test and 3 Studio end-to-end tests added with Studio) |
 | `cargo run -p ma-bench --release` | ✅ all scenarios verified (see below) |
 | `migrate-anything doctor` | ✅ all checks ok (state DB, keys, sandbox self-test) |
 | README quickstart via the CLI binary (fresh workspace) | ✅ discovery, suggestion, plan, dry run; approval and job start correctly **refused** in a non-interactive shell (the interactive approval step must be performed by a human) |
+| Studio in a browser (Chromium): demo from start to verified report, adding file / PostgreSQL / web API connections, connector generation, mapping edits, plan and test run, phone-width layout, animation toggle | ✅ checked by hand on a test build with synthetic data. Pause/resume and the approval rules are covered by `studio_ui.rs`; the Pause, Resume and Cancel buttons themselves were not clicked in a browser |
 | `cargo audit`, `cargo deny`, gitleaks | ⚠️ configured in CI, **not executed** locally (tools not installed); license inventory checked manually via `cargo metadata` — all permissive |
-| GitHub Actions (Linux/macOS/Windows matrix, Postgres service, release builds) | ⚠️ written, **not executed** (no remote/push authorized) |
+| GitHub Actions (Linux/macOS/Windows matrix, Postgres service, release builds) | ⚠️ started by the push to the private repository; **result not checked** |
 
-### Test inventory (74)
+### Test inventory (82)
 
 | Suite | Tests |
 |---|---|
 | ma-types (values, lossless JSON, hashing, property tests) | 10 |
 | ma-security (encryption binding, SSRF policy, redaction) | 3 |
-| ma-persistence (restart durability, lease exclusivity) | 2 |
+| ma-persistence (restart durability, leases) | 3 |
 | ma-connector-sdk, ma-planning, ma-validation | 3 |
-| ma-mapping (runtime, suggestions incl. Customer→Account example, property test) | 7 |
+| ma-mapping (runtime, suggestions incl. Customer→Account example and key guessing, property test) | 8 |
 | ma-sandbox (imports rejected, fuel, deadline, memory, OOB output) | 6 |
 | ma-connector-factory (spec validation, malicious specs) | 2 |
 | ma-connector-files (streaming, nested JSON, resume truncation, overwrite refusal, traversal) | 5 |
 | ma-connector-postgres (1 unit + 9 integration incl. 2 regression tests) | 10 |
+| ma-connector-rest (a create that failed in flight is not sent again) | 1 |
 | ma-example-api (fixture API) | 8 |
 | Demo 1 CRM | 1 |
 | Demo 2 Finance | 1 |
 | Demo 3 PostgreSQL → PostgreSQL | 1 |
 | Demo 4 Unknown system | 1 |
 | Demo 5 Interrupted (fault-injected crash, external kill, pause/resume/cancel, Postgres crash) | 4 |
-| Demo 6 Security (10 scenarios incl. a real MCP stdio session) | 10 |
+| Demo 6 Security (12 scenarios incl. a real MCP stdio session) | 12 |
+| Studio end to end over HTTP (sign-in to verified report, pause/resume, no approval without a terminal) | 3 |
 
 ## Demonstrations — measured outcomes
 
@@ -122,5 +126,7 @@ execution; Linux/macOS verification; final license.
 1. Run `migrate-anything plan approve <plan>` once yourself to experience the approval flow
    (it requires your interactive terminal by design).
 2. Decide the license (docs/LICENSE_DECISION_CHECKLIST.md).
-3. Authorize creating a repository and pushing, so CI (multi-OS tests, audit, deny, gitleaks,
-   release artifacts) can run.
+3. Look at the CI run on GitHub (multi-OS tests, audit, deny, gitleaks, release artifacts); it
+   was started by the push and has not been checked.
+4. Start `studio.cmd demo`, approve with the code from the terminal and watch a run: this is
+   the one path only a person can exercise end to end in a browser.

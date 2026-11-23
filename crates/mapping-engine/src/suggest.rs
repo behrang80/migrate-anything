@@ -145,7 +145,14 @@ pub fn name_score(a: &str, b: &str) -> (f32, String) {
     if syn_tok {
         score = score.max(0.7);
     }
-    let why = if jacc > 0.0 {
+    // one name is the other plus a qualifier: `org_name` / `name`, `annual_revenue` / `revenue`
+    let contained = inter > 0.0 && (inter == ta.len() as f32 || inter == tb.len() as f32);
+    if contained {
+        score = score.max(0.5 + 0.3 * jacc);
+    }
+    let why = if contained && jacc < 1.0 {
+        format!("`{}` is `{}` with a qualifier", if ta.len() > tb.len() { &na } else { &nb }, if ta.len() > tb.len() { &nb } else { &na })
+    } else if jacc > 0.0 {
         format!("token overlap {:.0}% between `{na}` and `{nb}`", jacc * 100.0)
     } else if syn_tok {
         format!("`{na}` and `{nb}` share synonymous tokens")
@@ -368,6 +375,50 @@ pub fn suggest_mapping(
                 }
             }
         }
+        // A destination primary key that the destination does not generate itself is where the
+        // source identifier belongs. Unless a confident name match already fills it, propose the
+        // source primary key — as a guess for the operator to confirm.
+        if key_field.is_none()
+            && let Some(pk) = &src_pk
+            && let [tpk] = to.primary_key.as_slice()
+            && let (Some(sf), Some(tf)) = (so.field(pk), to.field(tpk))
+            && tf.required
+            && !tf.read_only
+        {
+            let best = |own: bool| {
+                cands
+                    .iter()
+                    .filter(|(_, c)| &c.target_field == tpk && (c.source_field.as_ref() == Some(pk)) == own)
+                    .map(|(conf, _)| *conf)
+                    .fold(0.0f32, f32::max)
+            };
+            let (own, other) = (best(true), best(false));
+            if own >= opts.accept_threshold && own >= other {
+                key_field = Some(tpk.clone());
+            } else if other < opts.accept_threshold && sf.field_type.converts_to(tf.field_type) {
+                let confidence = (opts.accept_threshold - 0.1).max(opts.min_confidence);
+                let typed = sf.field_type != tf.field_type && tf.field_type != FieldType::Unknown && sf.field_type != FieldType::Unknown;
+                cands.retain(|(_, c)| &c.target_field != tpk);
+                cands.push((
+                    confidence,
+                    MappingSuggestion {
+                        source_object: so.name.clone(),
+                        target_object: to.name.clone(),
+                        source_field: Some(pk.clone()),
+                        target_field: tpk.clone(),
+                        expr: if typed { Expr::Cast { input: Box::new(Expr::field(pk)), to: tf.field_type } } else { Expr::field(pk) },
+                        confidence,
+                        explanation: format!("`{pk}` identifies each source record and `{tpk}` is the destination's required key"),
+                        evidence: vec![
+                            format!("source primary key is `{pk}`"),
+                            format!("destination primary key `{tpk}` is required and not generated"),
+                        ],
+                        suggested_by: "heuristic".into(),
+                    },
+                ));
+                key_field = Some(tpk.clone());
+            }
+        }
         // greedy one-to-one assignment
         cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.target_field.cmp(&b.1.target_field)));
         let (mut used_s, mut used_t) = (BTreeSet::new(), BTreeSet::new());
@@ -376,6 +427,9 @@ pub fn suggest_mapping(
             let sfield = s.source_field.clone().unwrap_or_default();
             let is_key = Some(&s.target_field) == key_field.as_ref();
             if used_t.contains(&s.target_field) || (!is_key && used_s.contains(&sfield)) {
+                continue;
+            }
+            if !is_key && key_field.is_some() && s.source_field == src_pk && s.confidence < opts.accept_threshold {
                 continue;
             }
             used_t.insert(s.target_field.clone());
@@ -498,5 +552,35 @@ mod tests {
         assert_eq!(target_of("currency_code").as_deref(), Some("currency"));
         assert_eq!(m.target_key_field.as_deref(), Some("external_id"));
         assert!(m.fields.iter().all(|f| !f.explanation.is_empty()));
+    }
+
+    fn schema_of(o: ObjectDef) -> SystemSchema {
+        SystemSchema { objects: vec![o], relationships: vec![] }
+    }
+
+    #[test]
+    fn required_destination_key_receives_the_source_key_as_a_guess() {
+        let src = schema_of(obj("contacts", &[("contact_no", FieldType::Int), ("email", FieldType::String)], "contact_no"));
+        let mut people = obj("people", &[("id", FieldType::String), ("email", FieldType::String)], "id");
+        people.fields[0].required = true;
+        let set = suggest_mapping(&src, &schema_of(people.clone()), &[], &SuggestOptions::default());
+        let m = &set.mapping.objects[0];
+        let id = m.fields.iter().find(|f| f.target == "id").expect("the key is mapped");
+        assert_eq!(id.expr, Expr::Cast { input: Box::new(Expr::field("contact_no")), to: FieldType::String });
+        assert_eq!(id.status, ReviewStatus::NeedsReview, "a guess must be confirmed by the operator");
+        assert_eq!(m.target_key_field.as_deref(), Some("id"));
+        assert_eq!(m.write_mode, WriteMode::Upsert);
+        assert!(set.unmatched_required_targets.is_empty());
+        assert!(!set.unmatched_source_fields.contains_key("contacts"));
+
+        assert_eq!(name_score("org_name", "name").0, 0.65);
+        assert!(name_score("annual_revenue", "revenue").0 >= SuggestOptions::default().min_confidence);
+
+        // a key the destination generates itself (not required) is left alone
+        people.fields[0].required = false;
+        let set = suggest_mapping(&src, &schema_of(people), &[], &SuggestOptions::default());
+        let m = &set.mapping.objects[0];
+        assert!(m.fields.iter().all(|f| f.target != "id"));
+        assert_eq!(m.target_key_field, None);
     }
 }

@@ -19,12 +19,29 @@ struct Cli {
     /// Machine-readable JSON output
     #[arg(long, global = true)]
     json: bool,
+    /// Without a command, Migrate Anything Studio (the web interface) opens.
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Open Migrate Anything Studio, the web interface (this is the default)
+    Ui {
+        /// Port on 127.0.0.1 (default 4747, or any free port if taken)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Do not open the browser automatically
+        #[arg(long)]
+        no_open: bool,
+    },
+    /// Open Studio with a ready-made demo migration (made-up data, nothing leaves this computer)
+    Demo {
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Verify the installation (state database, keys, sandbox)
     Doctor,
     /// MCP server
@@ -270,6 +287,37 @@ enum WorkerCmd {
     },
 }
 
+/// A session that can take approvals exists only when a person started us from a terminal.
+fn interactive_session() -> Option<ma_core::InteractiveSession> {
+    let session = ma_core::InteractiveSession::from_terminal().ok();
+    #[cfg(feature = "test-approval")]
+    let session = session.or_else(|| ma_core::InteractiveSession::for_tests().ok());
+    session
+}
+
+async fn studio(app: App, port: Option<u16>, no_open: bool, fragment: &str) -> Result<()> {
+    let session = interactive_session();
+    let ui = ma_ui::serve(Arc::new(app), ma_ui::UiOptions { port: port.unwrap_or(0), session })
+        .await
+        .context("could not start Migrate Anything Studio (is the port in use?)")?;
+    let url = format!("{}{fragment}", ui.url);
+    eprintln!();
+    eprintln!("  Migrate Anything Studio is running.");
+    eprintln!();
+    eprintln!("  Open:       {url}");
+    if ui.approvals_enabled() {
+        eprintln!("  Approvals:  when you approve in the browser, a one-time code appears in this window.");
+    } else {
+        eprintln!("  Approvals:  disabled here (not an interactive terminal). Use `migrate-anything plan approve <plan>`.");
+    }
+    eprintln!("  Keep this window open. Press Ctrl+C to stop.");
+    eprintln!();
+    if !no_open && !ma_ui::open_in_browser(&url) {
+        eprintln!("  (Could not open the browser automatically; copy the link above.)");
+    }
+    ui.wait().await.context("Studio stopped unexpectedly")
+}
+
 fn ma(e: MaError) -> anyhow::Error {
     anyhow!("{:?}: {}", e.class, e.message)
 }
@@ -294,7 +342,8 @@ async fn main() {
 
 async fn run(cli: Cli) -> Result<()> {
     let home = cli.home.clone().unwrap_or_else(App::default_home);
-    if let Cmd::Mcp { cmd: McpCmd::Tools } = &cli.cmd {
+    let cmd = cli.cmd.unwrap_or(Cmd::Ui { port: None, no_open: false });
+    if let Cmd::Mcp { cmd: McpCmd::Tools } = &cmd {
         for t in ma_mcp::tool_names() {
             println!("{t}");
         }
@@ -302,7 +351,9 @@ async fn run(cli: Cli) -> Result<()> {
     }
     let app = App::open(&home).await.map_err(ma).with_context(|| format!("opening workspace {}", home.display()))?;
     let json = cli.json;
-    match cli.cmd {
+    match cmd {
+        Cmd::Ui { port, no_open } => studio(app, port, no_open, "").await?,
+        Cmd::Demo { port, no_open } => studio(app, port, no_open, "#/demo").await?,
         Cmd::Doctor => {
             let r = app.doctor().await.map_err(ma)?;
             if json {

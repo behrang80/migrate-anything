@@ -44,8 +44,13 @@ Rules enforced by the crate graph:
   mapping specs, plans, approvals, reports) lives there so all layers share one vocabulary.
 * Connectors depend only on `ma-types`, `ma-connector-sdk` and `ma-security` (for the network
   policy). They contain no migration logic and no knowledge of other systems.
-* `ma-core` is the only crate that wires everything together. MCP and CLI call the same
-  `ma_core::App` methods; neither contains migration logic.
+* `ma-core` is the only crate that wires everything together. MCP, CLI and Studio call the same
+  `ma_core::App` methods; none of them contains migration logic.
+* Studio (`apps/ui-server`, crate `ma-ui`) is a third protocol adapter: an HTTP server bound to
+  127.0.0.1 that serves a single-page interface (plain HTML/CSS/JavaScript embedded in the binary,
+  no build step) and a JSON API over `ma_core::App`. Like the MCP server it never runs a job
+  in-process; it starts the same detached worker. It acts as `Actor::Ui` and can approve only
+  through a one-time code printed on the terminal it was started from (`InteractiveSession`).
 * The MCP server never executes jobs in-process: `migrate_job_execute` spawns a detached worker
   process (`migrate-anything worker run --job <id>`), so a job outlives the MCP request and the
   MCP client.
@@ -198,6 +203,8 @@ take/return `ma-types` structs so a PostgreSQL implementation can be added behin
 
 ## 10. Process model
 
+* `migrate-anything` or `migrate-anything ui` — Studio: local web interface on 127.0.0.1
+  (`demo` additionally prepares a synthetic demo migration).
 * `migrate-anything mcp serve` — stdio MCP server.
 * `migrate-anything worker run --job <id>` — executes one job; started detached by the MCP server
   or CLI (`jobs start`). Takes a lease; exits on completion, pause or cancel.

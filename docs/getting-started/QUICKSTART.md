@@ -1,5 +1,39 @@
 # Quickstart
 
+## The easy way: Studio
+
+Studio is the web interface. It runs on your own computer and opens in your browser.
+
+```sh
+studio.cmd demo        # Windows (or double-click studio.cmd)
+./studio.sh demo       # macOS / Linux
+```
+
+The first start builds the program. Then Studio opens with a demo migration prepared (90,000
+made-up CRM records that never leave your computer):
+
+1. **Map** — look at how the fields were matched, then press *Create the plan*.
+2. **Plan** — read what will happen; a test run has already checked a sample without writing.
+3. **Approve** — press *Show a code in my terminal*, read the 6-character code in the terminal
+   window Studio was started from, type it in the browser.
+4. **Run & proof** — watch the migration, then read the verified report. *Watch it again*
+   replays a finished run.
+
+For your own data start Studio without `demo` and press *Start a migration*. Add a connection
+on each side:
+
+* **Files** — a folder with one file per data set (`customers.csv`, `orders.csv`). Studio
+  proposes the ID column of each file; confirm it so records can be matched and verified.
+* **PostgreSQL** — server, database, user, password. As a destination the tables must exist.
+* **Web API** — the address and, if needed, a key. Studio then asks for the API's OpenAPI
+  description (usually `/openapi.json`) and builds and tests a connector from it.
+
+Keep the terminal window open while you work: it shows the approval codes, and closing it stops
+Studio (a running migration continues in its own process and is there when you start Studio
+again).
+
+The rest of this page does the same with commands.
+
 ## 1. Install and verify
 
 ```sh

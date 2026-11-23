@@ -10,11 +10,17 @@ publish.workspace = true
 name = "migrate-anything"
 path = "src/main.rs"
 
+[features]
+# Test builds only (never in release binaries): lets `ui` accept approvals without a terminal
+# when MA_INSECURE_TEST_APPROVAL=1, so the interface can be driven by automated checks.
+test-approval = ["ma-core/test-approval", "ma-ui/test-approval"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 ma-core.workspace = true
 ma-mcp.workspace = true
+ma-ui.workspace = true
 ma-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -25,6 +31,8 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 ma-core = { workspace = true, features = ["test-approval"] }
 ma-example-api.workspace = true
+ma-ui = { workspace = true, features = ["test-approval"] }
+reqwest = { workspace = true, features = ["cookies"] }
 ma-connector-files.workspace = true
 ma-sandbox.workspace = true
 ma-security.workspace = true

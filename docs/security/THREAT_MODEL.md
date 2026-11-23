@@ -24,6 +24,8 @@ Source and destination data; credentials; approval authority; the integrity of m
 | Duplicate writes after crashes | Idempotent sinks (truncate-to-checkpoint files, key upserts) or in-flight reconciliation by key lookup; otherwise records are flagged, never blindly re-sent. |
 | Silent data loss | Unmapped values archived; failed records preserved with full source content; report status derived from verification evidence. |
 | Tampering with registered connectors/extensions | Content hashes verified at load; activation requires operator consent. |
+| A web page drives Studio (cross-site request, DNS rebinding) | Studio listens on 127.0.0.1 only; every API call needs the session cookie (`HttpOnly`, `SameSite=Strict`) set from the one-time start link; the `Host` header must name 127.0.0.1/localhost on Studio's port; state-changing requests need a same-origin `Origin`; strict Content-Security-Policy and no third-party resources. |
+| Another local program approves through Studio's HTTP port | Approving needs a one-time code printed on the terminal Studio was started from (5 minutes, 5 attempts, single use, bound to one plan or connector). Without an interactive terminal Studio cannot approve at all. |
 
 ## Out of scope for v1
 Multi-tenant isolation; remote MCP transport (not exposed); hostile local administrator; side

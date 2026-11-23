@@ -17,6 +17,26 @@ First release candidate.
 * Verification and evidence-based reports; exception archive.
 * Six end-to-end demonstrations and a benchmark suite including 1,000,000 records.
 
+### Added after the first candidate build
+* **Migrate Anything Studio**, a local web interface (`migrate-anything` without arguments, or
+  `migrate-anything ui`): five guided steps (connect, map, plan, approve, run & proof), a mapping
+  board with wires between fields, a live run view where code rain follows the records being
+  migrated, pause/resume/cancel, automatic verification and the report. `migrate-anything demo`
+  opens it with a ready-made demo of 90,000 synthetic records. Finished runs can be replayed.
+* Approval from Studio through a one-time code shown on the terminal it was started from; the
+  HTTP server is local-only with session token, Host and Origin checks and a strict CSP.
+* `studio.cmd` / `studio.sh` launchers that build on first start and open Studio.
+* Mapping suggestions: a destination's required primary key now receives the source record ID
+  (as a guess to confirm), names that differ by a qualifier are matched (`org_name` → `name`),
+  and the source ID is no longer guessed into unrelated fields.
+* Studio end-to-end tests (`apps/cli/tests/studio_ui.rs`).
+
+### Changed
+* Running `migrate-anything` without a command opens Studio instead of printing help.
+* A relative folder given for a file connection is stored as an absolute path, so the worker
+  process finds it regardless of where it is started.
+* A job whose worker cannot start is marked failed with the reason instead of staying pending.
+
 ### Fixed during release-candidate testing (found by the verification engine and tests)
 * PostgreSQL: keyset pagination ordered by text cast of the key (skipped/repeated rows beyond
   10 pages of numeric keys).

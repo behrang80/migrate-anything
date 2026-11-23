@@ -31,6 +31,8 @@ pub struct JobRunner {
     pub job_id: String,
     pub owner: String,
     pub lease: Duration,
+    /// Set by the heartbeat task if another worker took the lease.
+    pub lease_lost: std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 /// How a run ended.
@@ -114,7 +116,29 @@ impl JobRunner {
         }
         self.store.set_job_status(&self.job_id, JobStatus::Running, None).await?;
         self.store.audit(&self.owner, "job.worker_started", Some(&self.job_id), json!({"pid": pid, "attempt": info.attempts})).await?;
+        // Heartbeat: keep the lease alive independently of batch duration, so a slow batch can
+        // never let another worker take over (or a cancel be applied as if no worker ran).
+        let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let heartbeat = {
+            let (store, job, owner, lease, lost) = (self.store.clone(), self.job_id.clone(), self.owner.clone(), self.lease, lost.clone());
+            tokio::spawn(async move {
+                let every = (lease / 3).max(Duration::from_millis(100));
+                loop {
+                    tokio::time::sleep(every).await;
+                    match store.acquire_lease(&job, &owner, lease, pid).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            lost.store(true, std::sync::atomic::Ordering::SeqCst);
+                            return;
+                        }
+                        Err(e) => tracing::warn!(error = %e, "lease heartbeat failed; will retry"),
+                    }
+                }
+            })
+        };
+        *self.lease_lost.lock().expect("lock") = Some(lost);
         let result = self.run_stages(&info).await;
+        heartbeat.abort();
         let end = match &result {
             Ok(RunEnd::Completed) => {
                 self.store.set_job_status(&self.job_id, JobStatus::Completed, None).await?;
@@ -159,7 +183,8 @@ impl JobRunner {
     }
 
     async fn check_control(&self) -> MaResult<Option<RunEnd>> {
-        if !self.store.acquire_lease(&self.job_id, &self.owner, self.lease, std::process::id()).await? {
+        let lost = self.lease_lost.lock().expect("lock").as_ref().is_some_and(|l| l.load(std::sync::atomic::Ordering::SeqCst));
+        if lost || !self.store.acquire_lease(&self.job_id, &self.owner, self.lease, std::process::id()).await? {
             return Err(MaError::policy("lost the job lease to another worker; stopping"));
         }
         Ok(match self.store.get_job(&self.job_id).await?.control {
@@ -200,6 +225,12 @@ impl JobRunner {
         let cp = self.store.get_checkpoint(&self.job_id, object).await?;
         let sink = self.destination.sink()?.clone();
         sink.prepare(&spec, cp.sink_token.as_ref()).await?;
+        if cp.sink_token.is_none()
+            && let Some(tok) = sink.durable_token(&om.target_object).await?
+        {
+            // remember the post-prepare position so a stop before the first commit is resumable
+            self.store.set_initial_sink_token(&self.job_id, object, &tok).await?;
+        }
         self.store.set_stage_state(&self.job_id, object, "running").await?;
         let has_key = om.target_key_field.is_some();
         let idempotent = sink.idempotent_rewrites(om.write_mode, has_key);

@@ -1708,6 +1708,7 @@ name = "ma-mcp"
 version = "1.0.0-rc.1"
 dependencies = [
  "ma-core",
+ "ma-security",
  "ma-types",
  "rmcp",
  "schemars",

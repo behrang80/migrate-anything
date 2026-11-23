@@ -178,8 +178,9 @@ impl Value {
             return Value::String(String::new());
         }
         if let Ok(i) = s.parse::<i64>() {
-            // Keep leading-zero identifiers ("007") as strings.
-            if !(s.len() > 1 && (s.starts_with('0') || s.starts_with("-0"))) {
+            // Only text that round-trips exactly is an integer. This keeps identifiers such as
+            // "007", "+46701112233" (phone numbers) and "-0" as strings instead of changing them.
+            if i.to_string() == s {
                 return Value::Int(i);
             }
             return Value::String(s.to_string());
@@ -335,6 +336,9 @@ mod tests {
     fn leading_zero_ids_stay_strings() {
         assert_eq!(Value::infer_from_text("007"), Value::String("007".into()));
         assert_eq!(Value::infer_from_text("7"), Value::Int(7));
+        assert_eq!(Value::infer_from_text("-7"), Value::Int(-7));
+        assert_eq!(Value::infer_from_text("+46701112233"), Value::String("+46701112233".into()), "plus sign must survive");
+        assert_eq!(Value::infer_from_text("-0"), Value::String("-0".into()));
         assert_eq!(Value::infer_from_text("12.50"), Value::Decimal("12.50".into()));
     }
 

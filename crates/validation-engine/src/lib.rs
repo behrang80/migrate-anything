@@ -27,6 +27,10 @@ const PAGE: usize = 1000;
 
 /// Canonical comparison text for a value (null/missing are excluded by callers).
 pub fn canonical(v: &Value, ty: Option<FieldType>) -> String {
+    // A destination text field is compared as text, exactly: "1.50" and "1.5" are different.
+    if ty == Some(FieldType::String) {
+        return v.to_text().unwrap_or_default();
+    }
     let v = match (v, ty) {
         (Value::String(s), Some(t)) if t != FieldType::String => Value::parse_as(s, t),
         (Value::Int(_) | Value::Float(_) | Value::Decimal(_), Some(FieldType::String)) => v.clone(),
@@ -426,6 +430,12 @@ mod tests {
         assert_eq!(canonical(&Value::String("12.5".into()), Some(FieldType::Decimal)), "12.5");
         assert_eq!(canonical(&Value::Int(12), Some(FieldType::Decimal)), "12");
         assert_eq!(canonical(&Value::String("007".into()), Some(FieldType::String)), "007");
+        assert_ne!(
+            canonical(&Value::String("1.50".into()), Some(FieldType::String)),
+            canonical(&Value::String("1.5".into()), Some(FieldType::String)),
+            "text fields must not be normalized numerically"
+        );
+        assert_eq!(canonical(&Value::Decimal("1.50".into()), Some(FieldType::String)), "1.50");
         let a = canonical(&Value::String("2024-01-02T10:00:00+02:00".into()), Some(FieldType::DateTime));
         let b = canonical(&Value::String("2024-01-02 08:00:00".into()), Some(FieldType::DateTime));
         assert_eq!(a, b);

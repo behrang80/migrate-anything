@@ -35,15 +35,7 @@ fn err(e: MaError) -> String {
         ma_types::ErrorClass::NotFound => " (check the name/id)",
         _ => "",
     };
-    format!("{:?} error: {}{hint}", e.class, ma_security_redact(&e.message))
-}
-
-fn ma_security_redact(s: &str) -> String {
-    // errors never contain secrets by construction; redact URL passwords defensively
-    s.split(' ')
-        .map(|w| if w.contains("://") && w.contains('@') { "<url redacted>".to_string() } else { w.to_string() })
-        .collect::<Vec<_>>()
-        .join(" ")
+    format!("{:?} error: {}{hint}", e.class, ma_security::redact::redact(&e.message, &[]))
 }
 
 // ------------------------------------------------------------------ request types
@@ -52,7 +44,8 @@ fn ma_security_redact(s: &str) -> String {
 pub struct DiscoverArgs {
     /// Connection name. Use `connection` to register a new one first (no secrets allowed here).
     pub connection: String,
-    /// Optional: create or update the connection before discovering it.
+    /// Optional: register a NEW connection before discovering it. Agents cannot attach
+    /// credentials or modify existing connections; the operator does that with the CLI.
     #[serde(default)]
     pub define: Option<ConnectionDefinition>,
 }
@@ -66,9 +59,6 @@ pub struct ConnectionDefinition {
     /// Kind-specific settings, e.g. files: {"path": "./data", "format": "csv"};
     /// postgres: {"url": "postgres://user@host:5432/db"}; rest: {"base_url": "https://..."}.
     pub settings: serde_json::Value,
-    /// Name of a credential the operator stored with `migrate-anything credentials set`.
-    #[serde(default)]
-    pub credential_ref: Option<String>,
     /// Hosts this connection may contact (rest only).
     #[serde(default)]
     pub allowed_hosts: Vec<String>,
@@ -169,7 +159,7 @@ impl MigrateServer {
     }
 
     #[tool(
-        description = "Discover a system through an authorized connection: identity, capability manifest (verified/documented/inferred/unsupported/unknown) and schema. Optionally define the connection first (no secrets; credentials are referenced by name)."
+        description = "Discover a system through an authorized connection: identity, capability manifest (verified/documented/inferred/unsupported/unknown) and schema. Optionally register a new, credential-less connection first; connections that need credentials, and any change to an existing connection, must be made by the operator with the CLI."
     )]
     async fn migrate_system_discover(&self, Parameters(a): Parameters<DiscoverArgs>) -> ToolResult {
         if let Some(d) = a.define {
@@ -179,7 +169,7 @@ impl MigrateServer {
                 kind: d.kind,
                 environment: env,
                 settings: d.settings,
-                credential_ref: d.credential_ref,
+                credential_ref: None,
                 allowed_hosts: d.allowed_hosts,
                 connector_ref: None,
             };

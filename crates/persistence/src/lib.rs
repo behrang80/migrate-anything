@@ -753,14 +753,15 @@ impl Store {
     pub async fn set_job_status(&self, job_id: &str, status: JobStatus, error: Option<&str>) -> DbResult<()> {
         let finished = if status.is_terminal() { Some(now()) } else { None };
         sqlx::query(
-            "UPDATE jobs SET status=?, error=COALESCE(?, error), finished_at=COALESCE(?, finished_at),
-             started_at=CASE WHEN ?='running' AND started_at IS NULL THEN ? ELSE started_at END
-             WHERE workspace_id=? AND job_id=?",
+            "UPDATE jobs SET status=?1,
+             error=CASE WHEN ?1 IN ('pending','running','completed') THEN ?2 ELSE COALESCE(?2, error) END,
+             finished_at=COALESCE(?3, finished_at),
+             started_at=CASE WHEN ?1='running' AND started_at IS NULL THEN ?4 ELSE started_at END
+             WHERE workspace_id=?5 AND job_id=?6",
         )
         .bind(status.as_str())
         .bind(error)
         .bind(finished)
-        .bind(status.as_str())
         .bind(now())
         .bind(&self.ws)
         .bind(job_id)
@@ -851,6 +852,25 @@ impl Store {
     }
 
     /// Record the ids of a batch about to be written (before any destination I/O).
+    /// Store the sink position reached right after `prepare` (e.g. a file's length after its
+    /// header), so a job that stops before its first batch commit can still be resumed.
+    pub async fn set_initial_sink_token(&self, job_id: &str, stage: &str, token: &Cursor) -> DbResult<()> {
+        sqlx::query(
+            "INSERT INTO checkpoints (workspace_id, job_id, stage, sink_token_json, updated_at) VALUES (?,?,?,?,?)
+             ON CONFLICT (workspace_id, job_id, stage) DO UPDATE SET
+               sink_token_json=COALESCE(checkpoints.sink_token_json, excluded.sink_token_json), updated_at=excluded.updated_at",
+        )
+        .bind(&self.ws)
+        .bind(job_id)
+        .bind(stage)
+        .bind(to_json(token))
+        .bind(now())
+        .execute(&self.pool)
+        .await
+        .db()?;
+        Ok(())
+    }
+
     pub async fn mark_inflight(&self, job_id: &str, stage: &str, ids: &[String]) -> DbResult<()> {
         sqlx::query(
             "INSERT INTO checkpoints (workspace_id, job_id, stage, inflight_json, updated_at) VALUES (?,?,?,?,?)
@@ -1159,6 +1179,25 @@ mod tests {
         assert_eq!(s.get_job("j1").await.unwrap().status, JobStatus::Running);
         assert_eq!(s.audit_events(10).await.unwrap().len(), 1);
         assert!(s.schema_version().await.unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn error_is_cleared_when_a_failed_job_later_completes() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(&dir.path().join("s.db"), "w").await.unwrap();
+        sqlx::query("INSERT INTO jobs (workspace_id, job_id, plan_id, plan_hash, approval_id, status, created_at) VALUES ('w','j','p','h','a','pending',?)")
+            .bind(now())
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        s.set_job_status("j", JobStatus::Failed, Some("network down")).await.unwrap();
+        assert_eq!(s.get_job("j").await.unwrap().error.as_deref(), Some("network down"));
+        s.set_job_status("j", JobStatus::Running, None).await.unwrap();
+        s.set_job_status("j", JobStatus::Completed, None).await.unwrap();
+        let j = s.get_job("j").await.unwrap();
+        assert_eq!(j.status, JobStatus::Completed);
+        assert_eq!(j.error, None, "stale error must not survive a successful resume");
+        assert!(j.started_at.is_some() && j.finished_at.is_some());
     }
 
     #[tokio::test]

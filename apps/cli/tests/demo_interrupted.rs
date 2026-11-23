@@ -165,6 +165,19 @@ async fn demo5c_pause_resume_and_cancel() {
     env.app.run_worker(&job).await.unwrap();
     assert_eq!(env.app.job_status(&job).await.unwrap().status, JobStatus::Completed);
 
+    // regression: a CSV destination (header already written) paused before its first checkpoint
+    // must be resumable instead of failing with "destination file already exists"
+    let out_csv = env.path("out_csv");
+    env.files_conn("dstcsv", &out_csv, "csv", Environment::Production).await;
+    let job_csv = prepared_job(&env, "dstcsv", "account_ref").await;
+    env.app.pause_job(&job_csv, Actor::Cli).await.unwrap();
+    env.app.run_worker(&job_csv).await.unwrap();
+    assert_eq!(env.app.job_status(&job_csv).await.unwrap().status, JobStatus::Paused);
+    env.app.resume_job(&job_csv, SpawnMode::Inline, Actor::Cli).await.unwrap();
+    env.app.run_worker(&job_csv).await.unwrap();
+    assert_eq!(env.app.job_status(&job_csv).await.unwrap().status, JobStatus::Completed);
+    assert_eq!(std::fs::read_to_string(out_csv.join("accounts.csv")).unwrap().lines().count(), ROWS + 1);
+
     // cancel: a job cancelled before any worker runs ends as Cancelled and nothing is claimed
     env.files_conn("dst2", &env.path("out2"), "jsonl", Environment::Production).await;
     let job2 = prepared_job(&env, "dst2", "account_ref").await;

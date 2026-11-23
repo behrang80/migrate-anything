@@ -105,6 +105,24 @@ impl App {
         if c.name.is_empty() || c.name.len() > 64 || !c.name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_') {
             return Err(MaError::validation("connection name must be 1-64 chars of [A-Za-z0-9_-]"));
         }
+        if actor == Actor::Mcp {
+            // Agents may register new, credential-less connections only. Attaching a stored
+            // credential or changing where an existing connection points is an operator action:
+            // otherwise an agent could route a secret to a host of its choosing, or retarget an
+            // approved plan.
+            if c.credential_ref.is_some() {
+                return Err(MaError::policy(format!(
+                    "credentials can only be attached by the operator: migrate-anything connections add {} ... --credential-ref <name>",
+                    c.name
+                )));
+            }
+            if self.store.get_connection(&c.name).await.is_ok() {
+                return Err(MaError::policy(format!(
+                    "connection `{}` already exists; only the operator can change it (migrate-anything connections add)",
+                    c.name
+                )));
+            }
+        }
         match c.kind.as_str() {
             "files" | "postgres" => {}
             "rest" => {
@@ -285,8 +303,19 @@ impl App {
                 if !resp.status().is_success() {
                     return Err(MaError::validation(format!("document request returned HTTP {}", resp.status())));
                 }
-                let bytes = resp.bytes().await.map_err(|e| MaError::transient(e.to_string()))?;
-                Ok(bytes.to_vec())
+                const MAX_DOC: usize = 20 * 1024 * 1024;
+                if resp.content_length().is_some_and(|n| n > MAX_DOC as u64) {
+                    return Err(MaError::validation("API document larger than 20 MiB"));
+                }
+                let mut resp = resp;
+                let mut body = Vec::new();
+                while let Some(chunk) = resp.chunk().await.map_err(|e| MaError::transient(format!("reading document: {e}")))? {
+                    if body.len() + chunk.len() > MAX_DOC {
+                        return Err(MaError::validation("API document larger than 20 MiB; download aborted"));
+                    }
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(body)
             }
         }
     }
@@ -731,6 +760,32 @@ impl App {
         Err(last_err)
     }
 
+    /// Connect a plan endpoint and prove it is still the system the plan (and its approval) was
+    /// made for. A connection that was re-pointed, re-typed or given another connector after
+    /// planning is refused: the approval is bound to systems, not to connection names.
+    async fn connect_endpoint(&self, ep: &PlanEndpoint) -> MaResult<ConnectorHandle> {
+        let (cfg, handle, cref) = self.connect(&ep.connection).await?;
+        let live = handle.connector.identify();
+        let same_system = live.kind == ep.identity.kind && live.name == ep.identity.name && live.locator == ep.identity.locator;
+        if !same_system || cref != ep.connector || cfg.environment != ep.environment {
+            return Err(MaError::policy(format!(
+                "connection `{}` no longer matches the approved plan (planned: {} at {} [{}], connector {}@{}; now: {} at {} [{}], connector {}@{}). Create and approve a new plan.",
+                ep.connection,
+                ep.identity.name,
+                ep.identity.locator,
+                ep.environment,
+                ep.connector.id,
+                ep.connector.version,
+                live.name,
+                live.locator,
+                cfg.environment,
+                cref.id,
+                cref.version
+            )));
+        }
+        Ok(handle)
+    }
+
     async fn ensure_connectors_active(&self, plan: &MigrationPlan) -> MaResult<()> {
         for (ep, need_active) in [(&plan.source, false), (&plan.destination, true)] {
             if ep.connector.generated {
@@ -758,6 +813,8 @@ impl App {
             }
         };
         self.ensure_connectors_active(&sp.plan).await?;
+        self.connect_endpoint(&sp.plan.source).await?;
+        self.connect_endpoint(&sp.plan.destination).await?;
         let job_id = format!("job-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
         self.store.create_job(&job_id, &sp.plan, &sp.plan_hash, &approval.claims.approval_id).await?;
         self.store
@@ -804,8 +861,8 @@ impl App {
         let approval = self.store.get_approval(&self.store.job_approval_id(job_id).await?).await?;
         ma_security::approval::verify(&self.approval_key, &approval, &sp.plan, &sp.plan_hash, &sp.plan.operations)?;
         self.ensure_connectors_active(&sp.plan).await?;
-        let (_, source, _) = self.connect(&sp.plan.source.connection).await?;
-        let (_, destination, _) = self.connect(&sp.plan.destination.connection).await?;
+        let source = self.connect_endpoint(&sp.plan.source).await?;
+        let destination = self.connect_endpoint(&sp.plan.destination).await?;
         let lease_secs = std::env::var("MA_LEASE_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(30u64);
         let runner = JobRunner {
             store: self.store.clone(),
@@ -817,6 +874,7 @@ impl App {
             job_id: job_id.into(),
             owner: format!("worker-{}-{}", std::process::id(), ma_security::random_hex(4)),
             lease: Duration::from_secs(lease_secs.max(1)),
+            lease_lost: Default::default(),
         };
         runner.run().await
     }
@@ -877,8 +935,8 @@ impl App {
     pub async fn verify_job(&self, job_id: &str, actor: Actor) -> MaResult<VerificationResult> {
         let job = self.store.get_job(job_id).await?;
         let sp = self.store.get_plan(&job.plan_id).await?;
-        let (_, source, _) = self.connect(&sp.plan.source.connection).await?;
-        let (_, destination, _) = self.connect(&sp.plan.destination.connection).await?;
+        let source = self.connect_endpoint(&sp.plan.source).await?;
+        let destination = self.connect_endpoint(&sp.plan.destination).await?;
         let v = ma_validation::Verifier {
             store: &self.store,
             plan: &sp.plan,

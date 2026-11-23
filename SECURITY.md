@@ -11,6 +11,7 @@ and reproduction steps without real credentials or customer data.
 | Control | Implementation | Tested in |
 |---|---|---|
 | No writes without human approval | Jobs require an HMAC-SHA256-signed approval bound to plan id + SHA-256 plan hash, source/destination identity, connector versions, permitted operations, operator, target environment, expiry. Re-verified by the worker. | `demo_security.rs` |
+| Agents cannot retarget or leak credentials | Over MCP an agent can only register *new* connections *without* credentials; attaching a credential or changing an existing connection requires the operator's CLI. At job start, in the worker and in verification the live system identity, connector version and environment must equal the approved plan's. | `demo_security.rs` |
 | Agents cannot approve | `migrate_plan_approve` (MCP) only records a request. Approvals are created only by `plan approve` on an interactive terminal with a one-time code; non-TTY invocations are refused. | `demo_security.rs` (non-interactive CLI, MCP session) |
 | Plan immutability | Plans are stored once; the hash is recomputed before approval and execution; any change invalidates approval. | `demo_security.rs` |
 | Destructive operations | Listed in the plan and require `--allow-destructive` at approval. | `demo_security.rs` |

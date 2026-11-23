@@ -126,7 +126,13 @@ impl RestConnector {
     }
 
     /// Execute one request with retries for 429/5xx/transport errors. Returns (status, body).
-    async fn send(&self, method: HttpMethod, url: Url, body: Option<Vec<u8>>) -> MaResult<(u16, Value)> {
+    ///
+    /// `replayable` says whether the request may be sent again when its outcome is unknown
+    /// (a 5xx answer, or a connection that failed after the request left). Reads and operations
+    /// documented as idempotent are; a plain create is not — re-sending it could create a second
+    /// record, so the error is returned instead. Rate-limit answers (429/503) and connection
+    /// failures before anything was sent are always retried: the server did not act on them.
+    async fn send(&self, method: HttpMethod, url: Url, body: Option<Vec<u8>>, replayable: bool) -> MaResult<(u16, Value)> {
         let mut attempt = 0;
         loop {
             attempt += 1;
@@ -155,12 +161,14 @@ impl RestConnector {
             let resp = match rb.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    if attempt < MAX_ATTEMPTS {
+                    if (replayable || e.is_connect()) && attempt < MAX_ATTEMPTS {
                         self.bump("retries");
                         tokio::time::sleep(Duration::from_millis(100 << attempt)).await;
                         continue;
                     }
-                    return Err(MaError::transient(format!("request failed: {}", without_url(&e))));
+                    let unknown =
+                        if replayable || e.is_connect() { "" } else { " (not re-sent: the write may or may not have been applied)" };
+                    return Err(MaError::transient(format!("request failed: {}{unknown}", without_url(&e))));
                 }
             };
             let status = resp.status().as_u16();
@@ -182,7 +190,7 @@ impl RestConnector {
                 }
                 return Err(MaError::rate_limited(format!("rate limited (HTTP {status})"), ra));
             }
-            if status >= 500 && attempt < MAX_ATTEMPTS {
+            if status >= 500 && replayable && attempt < MAX_ATTEMPTS {
                 self.bump("retries");
                 tokio::time::sleep(Duration::from_millis(200 << attempt)).await;
                 continue;
@@ -202,7 +210,11 @@ impl RestConnector {
                 404 => Err(MaError::not_found(format!("HTTP 404 for {}", url.path()))),
                 409 => Err(MaError::new(ErrorClass::Validation, format!("HTTP 409 conflict: {}", excerpt(&parsed)))),
                 400..=499 => Err(MaError::validation(format!("HTTP {status}: {}", excerpt(&parsed)))),
-                _ => Err(MaError::transient(format!("HTTP {status}: {}", excerpt(&parsed)))),
+                _ if replayable => Err(MaError::transient(format!("HTTP {status}: {}", excerpt(&parsed)))),
+                _ => Err(MaError::transient(format!(
+                    "HTTP {status}: {} (not re-sent: the write may or may not have been applied)",
+                    excerpt(&parsed)
+                ))),
             };
         }
     }
@@ -234,7 +246,7 @@ impl RestConnector {
             return Err(MaError::unsupported(format!("lookup supports `{}`, not `{key_field}`", lk.key_field)));
         }
         let url = self.url(&lk.path, None, &[(lk.query_param.clone(), key.to_string())])?;
-        let (_, body) = self.send(HttpMethod::Get, url, None).await?;
+        let (_, body) = self.send(HttpMethod::Get, url, None, true).await?;
         for item in Self::records_at(&body, &lk.records_path)? {
             if item.get_path(&[key_field]).and_then(|v| v.to_text()).as_deref() == Some(key) {
                 return Ok(Some(self.to_record(res, item)?));
@@ -263,13 +275,13 @@ impl RestConnector {
         {
             if let Some(up) = &res.update {
                 let url = self.url(&up.path, Some(&existing.id), &[])?;
-                self.send(up.method, url, Some(Self::body_for(&r.fields))).await?;
+                self.send(up.method, url, Some(Self::body_for(&r.fields)), up.idempotent || up.method == HttpMethod::Put).await?;
             }
             return Ok(existing.id);
         }
         let create = res.create.as_ref().ok_or_else(|| MaError::unsupported(format!("`{}` cannot be created", res.name)))?;
         let url = self.url(&create.path, None, &[])?;
-        match self.send(create.method, url, Some(Self::body_for(&r.fields))).await {
+        match self.send(create.method, url, Some(Self::body_for(&r.fields)), create.idempotent).await {
             Ok((_, body)) => Ok(Self::response_id(res, create, &body, &key.map(|k| k.1).unwrap_or_default())),
             Err(e) if e.message.starts_with("HTTP 409") && res.lookup.is_some() => match &key {
                 Some((kf, kv)) => match self.find_by_key(res, kf, kv).await? {
@@ -411,7 +423,7 @@ impl RecordSource for RestConnector {
         };
         let _ = page_size;
         let url = self.url(&list.path, None, &q)?;
-        let (_, body) = self.send(HttpMethod::Get, url, None).await?;
+        let (_, body) = self.send(HttpMethod::Get, url, None, true).await?;
         let items = Self::records_at(&body, &list.records_path)?;
         let records = items.iter().map(|i| self.to_record(res, i)).collect::<MaResult<Vec<_>>>()?;
         let next_cursor = next(&body, records.len());
@@ -461,7 +473,7 @@ impl RecordSink for RestConnector {
         let res = self.resource(object)?;
         let up = res.update.as_ref().ok_or_else(|| MaError::unsupported("no update operation"))?;
         let url = self.url(&up.path, Some(dest_id), &[])?;
-        self.send(up.method, url, Some(Self::body_for(&fields))).await.map(|_| ())
+        self.send(up.method, url, Some(Self::body_for(&fields)), up.idempotent || up.method == HttpMethod::Put).await.map(|_| ())
     }
 
     async fn finish(&self, _object: &str) -> MaResult<()> {

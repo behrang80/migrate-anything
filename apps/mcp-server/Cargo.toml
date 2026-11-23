@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 ma-core.workspace = true
+ma-security.workspace = true
 ma-types.workspace = true
 rmcp.workspace = true
 schemars.workspace = true

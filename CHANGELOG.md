@@ -30,3 +30,20 @@ First release candidate.
 * Verification used non-indexable key lookups; id-map and verification inserts are now batched
   (about 2x execution and 10x verification throughput).
 * New, empty file destinations could not be discovered or planned; a 1:1 copy mapping is proposed.
+
+### Fixed after code review
+* Security: an approved job followed a connection that had been re-pointed after approval. Jobs,
+  workers and verification now refuse when the live system, connector or environment differs
+  from the approved plan.
+* Security: an agent could define a connection that reused a stored credential for a host of its
+  choosing. Over MCP, agents can now only register new, credential-less connections; attaching
+  credentials or changing an existing connection is an operator (CLI) action.
+* File destinations (CSV/JSON) could not be resumed when a job stopped before its first
+  checkpoint.
+* Text such as `+46701112233` was typed as an integer and lost its plus sign.
+* Non-idempotent REST creates were re-sent after 5xx or post-send transport errors.
+* The worker lease is now renewed by a heartbeat, independent of batch duration.
+* Verification compared numeric-looking text fields numerically (`1.50` = `1.5`).
+* OpenAPI downloads are capped at 20 MiB while streaming.
+* Redaction helper could panic on multi-byte text and was not applied to MCP errors.
+* A stale error message survived a successful resume.

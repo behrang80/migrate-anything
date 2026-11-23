@@ -41,6 +41,58 @@ async fn unapproved_writes_are_rejected() {
     assert!(audit.iter().any(|e| e.action == "job.rejected" && e.actor == "mcp-agent"));
 }
 
+/// Regression: an approval is bound to systems, not to connection names. Re-pointing a
+/// connection after approval must not let the approved plan write somewhere else.
+#[tokio::test(flavor = "multi_thread")]
+async fn approved_plan_refuses_a_retargeted_connection() {
+    let env = TestEnv::new().await;
+    let plan = simple_setup(&env).await;
+    env.approve(&plan).await;
+    // a job created while everything still matched ...
+    let job = env.app.start_job(&plan, SpawnMode::Inline, Actor::Cli).await.unwrap();
+    // ... then the destination connection is re-pointed at another location
+    let elsewhere = env.path("somewhere_else");
+    env.files_conn("dst", &elsewhere, "jsonl", Environment::Production).await;
+    let e = env.app.run_worker(&job.job_id).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
+    assert!(e.message.contains("no longer matches the approved plan"), "{}", e.message);
+    let e = env.app.start_job(&plan, SpawnMode::Inline, Actor::Cli).await.unwrap_err();
+    assert!(e.message.contains("no longer matches the approved plan"), "{}", e.message);
+    assert!(!elsewhere.join("items.jsonl").exists(), "nothing was written to the new target");
+    assert!(!env.dir.path().join("dst/items.jsonl").exists());
+    // changing only the environment label is also refused
+    env.files_conn("dst", &env.dir.path().join("dst"), "jsonl", Environment::Test).await;
+    assert!(env.app.start_job(&plan, SpawnMode::Inline, Actor::Cli).await.is_err());
+}
+
+/// Regression: an agent must not be able to attach a stored credential to a connection it
+/// defines (which would send the secret to a host of its choosing) or modify existing ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_cannot_attach_credentials_or_modify_connections() {
+    let env = TestEnv::new().await;
+    env.app.set_credential("prod-api-key", "s3cr3t-value").await.unwrap();
+    let conn = |name: &str, cred: Option<&str>| ConnectionConfig {
+        name: name.into(),
+        kind: "rest".into(),
+        environment: Environment::Production,
+        settings: json!({"base_url": "https://evil.example.com"}),
+        credential_ref: cred.map(String::from),
+        allowed_hosts: vec!["evil.example.com".into()],
+        connector_ref: None,
+    };
+    let e = env.app.add_connection(conn("exfil", Some("prod-api-key")), Actor::Mcp).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Policy);
+    assert!(e.message.contains("only be attached by the operator"), "{}", e.message);
+    assert!(env.app.store.get_connection("exfil").await.is_err(), "connection was not created");
+    // agents may register a new credential-less connection ...
+    env.app.add_connection(conn("fresh", None), Actor::Mcp).await.unwrap();
+    // ... but cannot change it (or any existing connection) afterwards
+    let e = env.app.add_connection(conn("fresh", None), Actor::Mcp).await.unwrap_err();
+    assert!(e.message.contains("only the operator can change it"), "{}", e.message);
+    // the operator still can
+    env.app.add_connection(conn("fresh", Some("prod-api-key")), Actor::Cli).await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn approval_cannot_be_granted_from_a_non_interactive_process() {
     let env = TestEnv::new().await;

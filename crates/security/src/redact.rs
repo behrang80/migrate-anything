@@ -25,10 +25,13 @@ pub fn redact(text: &str, known_secrets: &[&str]) -> String {
         while let Some(pos) = out[search_from..].to_ascii_lowercase().find(key) {
             let start = search_from + pos + key.len();
             let end = out[start..].find(['&', ' ', ';', '"', '\'', '\n']).map(|e| start + e).unwrap_or(out.len());
-            if end > start {
+            // continue after the (possibly replaced) value; both positions are char boundaries
+            search_from = if end > start {
                 out.replace_range(start..end, "***");
-            }
-            search_from = start + 3.min(out.len() - start);
+                start + 3
+            } else {
+                end
+            };
         }
     }
     // Bearer tokens
@@ -52,5 +55,8 @@ mod tests {
         assert!(!r.contains("abc123"));
         assert!(!r.contains("tok.en"));
         assert_eq!(redact("value topsecret here", &["topsecret"]), "value *** here");
+        // empty value followed by multi-byte text must not panic (char-boundary regression)
+        let s = format!("password=;a{}x token=", char::from_u32(0xe9).unwrap());
+        assert_eq!(redact(&s, &[]), s);
     }
 }

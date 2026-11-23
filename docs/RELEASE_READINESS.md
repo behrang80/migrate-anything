@@ -23,7 +23,7 @@ GitHub (not executable here), Linux/macOS verification, dependency audit executi
 |---|---|
 | `cargo fmt --all -- --check` | ✅ clean |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ clean |
-| `MA_TEST_PG_URL=postgres://ma_test@127.0.0.1:55432/postgres cargo test --workspace` | ✅ **74 passed, 0 failed** |
+| `MA_TEST_PG_URL=postgres://ma_test@127.0.0.1:55432/postgres cargo test --workspace` | ✅ **78 passed, 0 failed** (74 before the code review; 4 regression tests added with its fixes) |
 | `cargo run -p ma-bench --release` | ✅ all scenarios verified (see below) |
 | `migrate-anything doctor` | ✅ all checks ok (state DB, keys, sandbox self-test) |
 | README quickstart via the CLI binary (fresh workspace) | ✅ discovery, suggestion, plan, dry run; approval and job start correctly **refused** in a non-interactive shell (the interactive approval step must be performed by a human) |
@@ -92,6 +92,15 @@ Found by the verification engine, demos and benchmarks — each now has a regres
 7. Verifier compared untyped destination text with typed expectations (false discrepancies).
 8. Verification used non-indexable key lookups (≈14× slower) → keys always stored, indexed.
 9. Empty file destinations could not be discovered/planned → supported with a 1:1 copy proposal.
+
+## Code review (after the first commit)
+
+A full review found 10 issues, all fixed: two security problems (an approved job could follow a
+re-pointed connection; an agent could attach a stored credential to a connection it defined) and
+eight correctness/robustness issues (see CHANGELOG "Fixed after code review"). Regression tests
+cover the two security fixes, CSV resume before the first checkpoint, the plus-sign inference,
+the REST re-send, text comparison in verification, the redaction panic and the stale error. The
+lease heartbeat and the download cap have **no dedicated test**.
 
 ## Security risks (residual)
 

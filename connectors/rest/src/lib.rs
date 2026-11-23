@@ -195,10 +195,7 @@ impl RestConnector {
                 tokio::time::sleep(Duration::from_millis(200 << attempt)).await;
                 continue;
             }
-            let bytes = resp.bytes().await.map_err(|e| MaError::transient(format!("reading response: {}", without_url(&e))))?;
-            if bytes.len() > MAX_BODY {
-                return Err(MaError::validation("response body too large"));
-            }
+            let bytes = read_body(resp).await?;
             let parsed = if bytes.is_empty() {
                 Value::Null
             } else {
@@ -295,6 +292,24 @@ impl RestConnector {
     }
 }
 
+/// Read a response body, refusing anything larger than [`MAX_BODY`] *while it arrives*. The size
+/// is not checked afterwards: a broken or hostile server must not be able to make this process
+/// buffer an answer of any size first.
+async fn read_body(mut resp: reqwest::Response) -> MaResult<Vec<u8>> {
+    let too_large = || MaError::validation(format!("response body larger than {} MiB; download aborted", MAX_BODY / (1024 * 1024)));
+    if resp.content_length().is_some_and(|n| n > MAX_BODY as u64) {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| MaError::transient(format!("reading response: {}", without_url(&e))))? {
+        if body.len() + chunk.len() > MAX_BODY {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 fn without_url(e: &reqwest::Error) -> String {
     // reqwest errors include the URL; query strings could carry identifiers, keep it short.
     let mut s = e.to_string();
@@ -379,8 +394,15 @@ impl RecordSource for RestConnector {
         let res = self.resource(object)?;
         let list = res.list.as_ref().ok_or_else(|| MaError::unsupported(format!("`{object}` cannot be listed")))?;
         let mut q: Vec<(String, String)> = vec![];
-        let (page_size, next): (usize, Box<dyn Fn(&Value, usize) -> Option<Cursor> + Send + Sync>) = match &list.pagination {
-            Pagination::None => (usize::MAX, Box::new(|_, _| None)),
+        // How the position of the following page is derived once this one has been read.
+        enum Next {
+            None,
+            Cursor { path: Vec<String> },
+            Offset { at: u64, asked: usize },
+            Page { number: u64, asked: usize },
+        }
+        let next = match &list.pagination {
+            Pagination::None => Next::None,
             Pagination::Cursor { cursor_param, next_cursor_path, limit_param, page_size } => {
                 let n = (*page_size as usize).min(limit).max(1);
                 if let Some(lp) = limit_param {
@@ -389,44 +411,89 @@ impl RecordSource for RestConnector {
                 if let Some(c) = cursor.and_then(|c| c.get("cursor")).and_then(|v| v.as_str()) {
                     q.push((cursor_param.clone(), c.to_string()));
                 }
-                let path: Vec<String> = next_cursor_path.split('.').map(String::from).collect();
-                (
-                    n,
-                    Box::new(move |body: &Value, count: usize| {
-                        if count == 0 {
-                            return None;
-                        }
-                        let p: Vec<&str> = path.iter().map(String::as_str).collect();
-                        match body.get_path(&p) {
-                            Some(Value::Null) | None => None,
-                            Some(v) => v.to_text().filter(|s| !s.is_empty()).map(|s| json!({ "cursor": s })),
-                        }
-                    }),
-                )
+                Next::Cursor { path: next_cursor_path.split('.').map(String::from).collect() }
             }
             Pagination::Offset { offset_param, limit_param, page_size } => {
                 let n = (*page_size as usize).min(limit).max(1);
-                let off = cursor.and_then(|c| c.get("offset")).and_then(|v| v.as_u64()).unwrap_or(0);
-                q.push((offset_param.clone(), off.to_string()));
+                let at = cursor.and_then(|c| c.get("offset")).and_then(|v| v.as_u64()).unwrap_or(0);
+                q.push((offset_param.clone(), at.to_string()));
                 q.push((limit_param.clone(), n.to_string()));
-                (n, Box::new(move |_, count| (count >= n).then(|| json!({ "offset": off + count as u64 }))))
+                Next::Offset { at, asked: n }
             }
             Pagination::Page { page_param, size_param, page_size, first_page } => {
                 let n = (*page_size as usize).max(1);
-                let page = cursor.and_then(|c| c.get("page")).and_then(|v| v.as_u64()).unwrap_or(*first_page as u64);
-                q.push((page_param.clone(), page.to_string()));
+                let number = cursor.and_then(|c| c.get("page")).and_then(|v| v.as_u64()).unwrap_or(*first_page as u64);
+                q.push((page_param.clone(), number.to_string()));
                 if let Some(sp) = size_param {
                     q.push((sp.clone(), n.to_string()));
                 }
-                (n, Box::new(move |_, count| (count >= n).then(|| json!({ "page": page + 1 }))))
+                Next::Page { number, asked: n }
             }
         };
-        let _ = page_size;
         let url = self.url(&list.path, None, &q)?;
-        let (_, body) = self.send(HttpMethod::Get, url, None, true).await?;
+        let body = match self.send(HttpMethod::Get, url, None, true).await {
+            Ok((_, body)) => body,
+            Err(e) if past_the_end(cursor, &next, &e) => return Ok(Batch { records: vec![], next_cursor: None }),
+            Err(e) => return Err(e),
+        };
         let items = Self::records_at(&body, &list.records_path)?;
         let records = items.iter().map(|i| self.to_record(res, i)).collect::<MaResult<Vec<_>>>()?;
-        let next_cursor = next(&body, records.len());
+        let next_cursor = match next {
+            Next::None => None,
+            Next::Cursor { path } if !records.is_empty() => {
+                let p: Vec<&str> = path.iter().map(String::as_str).collect();
+                match body.get_path(&p) {
+                    Some(Value::Null) | None => None,
+                    Some(v) => v.to_text().filter(|s| !s.is_empty()).map(|s| json!({ "cursor": s })),
+                }
+            }
+            Next::Cursor { .. } => None,
+            Next::Offset { at, asked } => position_cursor(object, cursor, &records, asked, json!({ "offset": at + records.len() as u64 }))?,
+            Next::Page { number, asked } => position_cursor(object, cursor, &records, asked, json!({ "page": number + 1 }))?,
+        };
+
+        /// An error answer to a request for a page *after* the first can mean "there is no such
+        /// page": frameworks answer 404 for a page number past the last one, and some answer 400
+        /// for an offset past the end. That ends the listing instead of failing the migration,
+        /// in the two cases where it cannot hide records: the page before was not full (it was
+        /// the last one), or the API numbers its pages and says this number does not exist.
+        fn past_the_end(cursor: Option<&Cursor>, next: &Next, e: &MaError) -> bool {
+            let Some(c) = cursor else { return false };
+            let previous_was_short = c.get("short").and_then(|v| v.as_bool()) == Some(true);
+            match next {
+                Next::Offset { .. } => previous_was_short && matches!(e.class, ErrorClass::NotFound | ErrorClass::Validation),
+                Next::Page { .. } => e.class == ErrorClass::NotFound || (previous_was_short && e.class == ErrorClass::Validation),
+                _ => false,
+            }
+        }
+
+        /// Cursor for the page after this one in an offset- or page-numbered listing.
+        ///
+        /// Only an **empty** page ends such a listing. A page with fewer records than were asked
+        /// for does not: many APIs cap the page size below the requested one, and stopping there
+        /// would silently read only the first page. The price is one extra request per object.
+        /// To make sure that cannot loop, a page that starts with the same record as the page
+        /// before it is an error: the API is ignoring its paging parameters.
+        fn position_cursor(
+            object: &str,
+            prev: Option<&Cursor>,
+            records: &[Record],
+            asked: usize,
+            mut next: Cursor,
+        ) -> MaResult<Option<Cursor>> {
+            let Some(first) = records.first() else { return Ok(None) };
+            if prev.and_then(|c| c.get("first_id")).and_then(|v| v.as_str()) == Some(first.id.as_str()) {
+                return Err(MaError::validation(format!(
+                    "`{object}`: the API returned the same page twice (it starts with record `{}` again), so it is not honouring its \
+                     paging parameters and the listing cannot be read completely; check the pagination settings of the connector",
+                    first.id
+                )));
+            }
+            next["first_id"] = json!(first.id);
+            next["short"] = json!(records.len() < asked);
+            Ok(Some(next))
+        }
+
         Ok(Batch { records, next_cursor })
     }
 

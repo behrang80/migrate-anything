@@ -119,12 +119,18 @@ impl JobRunner {
         // Heartbeat: keep the lease alive independently of batch duration, so a slow batch can
         // never let another worker take over (or a cancel be applied as if no worker ran).
         let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (stop_heartbeat, mut stopped) = tokio::sync::watch::channel(false);
         let heartbeat = {
             let (store, job, owner, lease, lost) = (self.store.clone(), self.job_id.clone(), self.owner.clone(), self.lease, lost.clone());
             tokio::spawn(async move {
                 let every = (lease / 3).max(Duration::from_millis(100));
                 loop {
-                    tokio::time::sleep(every).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(every) => {}
+                        _ = stopped.changed() => return,
+                    }
+                    // Not part of the `select!` above on purpose: a renewal that has started
+                    // always finishes before this task can end.
                     match store.acquire_lease(&job, &owner, lease, pid).await {
                         Ok(true) => {}
                         Ok(false) => {
@@ -138,7 +144,12 @@ impl JobRunner {
         };
         *self.lease_lost.lock().expect("lock") = Some(lost);
         let result = self.run_stages(&info).await;
-        heartbeat.abort();
+        // Stop the heartbeat and wait until it has really ended before the lease is released.
+        // Aborting it instead would let a renewal that was already on its way to the database
+        // land *after* the release: the job would then look leased by a worker that is gone, and
+        // resume or cancel would be refused until that ghost lease expired.
+        let _ = stop_heartbeat.send(true);
+        let _ = heartbeat.await;
         let end = match &result {
             Ok(RunEnd::Completed) => {
                 self.store.set_job_status(&self.job_id, JobStatus::Completed, None).await?;
@@ -309,22 +320,37 @@ impl JobRunner {
                 // in-flight records from an interrupted batch on a non-idempotent destination
                 if !idempotent && inflight.contains(&rec.id) {
                     let key = om.target_key_field.as_ref().and_then(|k| t.fields.get(k)).and_then(|v| v.to_text());
-                    match (&self.destination.lookup, &om.target_key_field, key) {
-                        (Some(lookup), Some(kf), Some(key)) => {
-                            if let Some(found) = lookup.lookup_by_key(&om.target_object, kf, &key).await? {
-                                let dest_id = found.id.clone();
-                                id_maps.push(IdMapEntry { source_id: rec.id.clone(), dest_id, dest_key: Some(key) });
-                                counters.add_outcome(OutcomeKind::Transformed, 1);
-                                continue;
+                    // Was this record written before the worker stopped? Ask the destination.
+                    let found = match (&self.destination.lookup, &om.target_key_field, key) {
+                        (Some(lookup), Some(kf), Some(key)) => match lookup.lookup_by_key(&om.target_object, kf, &key).await {
+                            Ok(found) => Ok(found.map(|f| (f.id, key))),
+                            // The destination is unreachable, or refuses us: nothing about this
+                            // record is known yet. Fail the job; it resumes here once that is fixed.
+                            Err(e) if e.is_retryable() || matches!(e.class, ErrorClass::Auth | ErrorClass::Policy | ErrorClass::Config) => {
+                                return Err(e);
                             }
+                            // The lookup itself does not work for this record. Failing the job
+                            // would fail it again on every resume, at this same record, so the
+                            // record is set aside for a person to check and the job continues.
+                            Err(e) => Err(format!(
+                                "write was in flight when the worker stopped and the destination could not be asked whether it arrived: {}",
+                                e.message
+                            )),
+                        },
+                        _ => Err("write was in flight when the worker stopped; destination cannot be checked by key".to_string()),
+                    };
+                    match found {
+                        Ok(Some((dest_id, key))) => {
+                            id_maps.push(IdMapEntry { source_id: rec.id.clone(), dest_id, dest_key: Some(key) });
+                            counters.add_outcome(OutcomeKind::Transformed, 1);
+                            continue;
                         }
-                        _ => {
+                        // it never arrived: write it now
+                        Ok(None) => {}
+                        // unknown: never re-send blindly
+                        Err(reason) => {
                             counters.add_outcome(OutcomeKind::RequiresReconciliation, 1);
-                            outcomes.push((
-                                rec.id.clone(),
-                                OutcomeKind::RequiresReconciliation,
-                                Some("write was in flight when the worker stopped; destination cannot be checked by key".into()),
-                            ));
+                            outcomes.push((rec.id.clone(), OutcomeKind::RequiresReconciliation, Some(reason)));
                             continue;
                         }
                     }

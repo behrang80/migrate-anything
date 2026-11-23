@@ -42,6 +42,42 @@ async fn csv_streaming_types_and_nulls() {
     assert_eq!(all[1].id, "2");
 }
 
+/// Regression: column types are inferred from the first 1,000 rows. Later rows that the
+/// inferred type would alter must arrive exactly as written, not converted.
+#[tokio::test(flavor = "multi_thread")]
+async fn csv_rows_beyond_the_type_sample_are_not_altered() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut csv = String::from("id,zip,phone,seen\n");
+    for i in 1..=SCHEMA_SAMPLE {
+        csv.push_str(&format!("{i},{},{},2024-01-02\n", 10_000 + i, 46_700_000_000u64 + i as u64));
+    }
+    // rows 1,001 and 1,002: outside the sample the types were inferred from
+    csv.push_str("7001,01067,+46701112233,2024-03-04T05:06:07Z\n");
+    csv.push_str("7002,00501,0046701112233,2024-03-05\n");
+    std::fs::write(dir.path().join("people.csv"), csv).unwrap();
+    let c = conn(dir.path(), "csv");
+    let schema = c.discover_schema().await.unwrap();
+    let o = schema.object("people").unwrap();
+    assert_eq!(o.field("zip").unwrap().field_type, FieldType::Int, "the sample only held plain integers");
+    assert_eq!(o.field("phone").unwrap().field_type, FieldType::Int);
+    assert_eq!(o.field("seen").unwrap().field_type, FieldType::Date);
+    let all = read_all(&c, "people", 400).await;
+    assert_eq!(all.len(), SCHEMA_SAMPLE + 2);
+    assert_eq!(all[0].fields["zip"], Value::Int(10_001));
+    let late = &all[SCHEMA_SAMPLE];
+    assert_eq!(late.fields["zip"].to_text().as_deref(), Some("01067"), "leading zero kept");
+    assert_eq!(late.fields["phone"].to_text().as_deref(), Some("+46701112233"), "plus sign kept");
+    match &late.fields["seen"] {
+        Value::DateTime(dt) => assert_eq!(dt.to_rfc3339(), "2024-03-04T05:06:07+00:00", "time of day kept"),
+        other => panic!("expected a date-time, got {other:?}"),
+    }
+    let last = &all[SCHEMA_SAMPLE + 1];
+    assert_eq!(last.fields["zip"].to_text().as_deref(), Some("00501"));
+    assert_eq!(last.fields["phone"].to_text().as_deref(), Some("0046701112233"));
+    assert!(matches!(last.fields["seen"], Value::Date(_)));
+    assert!(all.iter().all(|r| r.fields.values().all(|v| !v.is_problem())), "none of these values is invalid");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn json_array_and_jsonl_nested() {
     let dir = tempfile::tempdir().unwrap();

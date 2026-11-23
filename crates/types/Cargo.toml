@@ -3,7 +3,7 @@ name = "ma-types"
 description = "Shared contracts for Migrate Anything: canonical records, manifests, specs, plans, reports."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

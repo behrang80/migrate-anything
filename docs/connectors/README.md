@@ -34,3 +34,18 @@ The cursor returned with a batch is the resume point; the engine stores it atomi
 batch outcomes. A sink's `durable_token` is stored with it and handed back on resume.
 
 See [DECLARATIVE_SPEC.md](DECLARATIVE_SPEC.md) for generated REST connectors.
+
+## Reading behaviour worth knowing
+
+* **CSV column types are inferred from the first 1,000 rows.** A later cell that the inferred
+  type would change is kept exactly as written instead of being converted: `01067` or
+  `+46701112233` in a column that looked like whole numbers stays text, and a date with a time in a
+  column that looked like dates keeps its time. A cell that is not a value of the type at all
+  (`abc` in a number column) is reported as invalid and its record is not written.
+* **Offset- and page-numbered API listings end on an empty page**, not on a page with fewer
+  records than requested. Many APIs cap the page size below what a client asks for; stopping at
+  the first short page would silently read only part of the data. This costs one extra request
+  per object. A `404` for a page number past the last one, or an error for an offset past the end
+  after a page that was not full, also ends the listing. A page that starts with the same record
+  as the page before it is an error: the API is not honouring its paging parameters.
+* **API responses are limited to 32 MiB each**, enforced while the response downloads.

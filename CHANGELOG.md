@@ -51,6 +51,46 @@ First release candidate.
   (about 2x execution and 10x verification throughput).
 * New, empty file destinations could not be discovered or planned; a 1:1 copy mapping is proposed.
 
+### License
+* The project is licensed under **Apache-2.0** (owner decision of 2026-11-23). `LICENSE` holds the
+  license text, `NOTICE` the copyright line, and every crate declares `license = "Apache-2.0"`.
+
+### Fixed after the second code review
+* Security: over MCP an agent could register a file connection for any folder, a database
+  connection for any host, and a web API connection that allowed private network addresses. An
+  agent can now only register folders the operator opened (`mcp serve --allow-dir <folder>` or
+  `MA_AGENT_DIRS`; none by default) and public web APIs. Local API documents are read only from
+  those folders. **This changes MCP setups that relied on the agent adding folders by itself:
+  add `--allow-dir`.**
+* Security: an agent could replace the connector of an existing connection, including one that
+  carries the operator's credential. It can now attach a connection's first connector only; a
+  refused replacement registers nothing. Attachments are audited.
+* The dry run read whatever the source connection pointed at, even after it had been re-pointed.
+  It now refuses a source that is no longer the planned system, like execution does.
+* CSV: rows beyond the 1,000-row type sample were converted to the inferred type, which dropped
+  leading zeros (`01067` → `1067`), plus signs and the time of day of date-times, without notice.
+  Such cells are now kept exactly as written.
+* REST: offset- and page-numbered listings stopped at the first page with fewer records than
+  requested, so an API that caps its page size was read only partly, without notice. Listings
+  now end on an empty page; a repeated page is an error.
+* REST: the response size limit was checked after the whole body had been buffered. It is now
+  enforced while the response downloads.
+* A job whose approval expired or was revoked while it was not running could never be resumed.
+  After the operator approves the same plan again it continues under the new approval; without
+  one nothing is written. Studio leads from the stopped migration to the approval and back.
+* After a crash, a destination lookup that failed for one in-flight record failed the job at
+  that record on every resume. The record is now set aside for reconciliation (never re-sent
+  blindly) and the job continues; an unreachable destination or rejected credentials still stop
+  the job so it can be resumed later.
+* A lease renewal could land after the lease was released when a worker stopped, leaving the job
+  looking leased by a worker that was gone for up to 30 seconds.
+* Unix: the detached worker shared the process group of the process that started it, so Ctrl+C
+  in that terminal stopped the migration. It now gets its own process group, and finished
+  workers are reaped.
+* Connector contract tests failed the pagination check for collections that fit on one page.
+* CI: the license and banned-crates check failed because workspace crates had no license and
+  depend on each other by path.
+
 ### Fixed after code review
 * Security: an approved job followed a connection that had been re-pointed after approval. Jobs,
   workers and verification now refuse when the live system, connector or environment differs

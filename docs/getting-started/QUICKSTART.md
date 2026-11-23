@@ -91,8 +91,13 @@ Try it locally with the bundled fixture: `cargo run -p ma-example-api -- --port 
 ## 5. From an AI client
 
 ```sh
-claude mcp add migrate-anything -- migrate-anything mcp serve
+claude mcp add migrate-anything -- migrate-anything mcp serve --allow-dir ./exports
 ```
+
+`--allow-dir <folder>` (repeatable, or the `MA_AGENT_DIRS` environment variable) opens a folder to
+the agent: it can register file connections inside it and read OpenAPI documents from it. Without
+it the agent works only with connections you added. Database connections, credentials, private
+network addresses and replacing a connection's connector always need you.
 
 Ask: *"Discover the `legacy` and `target` connections, propose a mapping, create a plan, show me
 the dry run, and request approval."* Then approve in your terminal and let the agent run and

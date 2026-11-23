@@ -1,8 +1,9 @@
 # Contributing
 
-Thanks for helping. Before external contributions are accepted the owner must finalize the
-license and contribution terms (see docs/LICENSE_DECISION_CHECKLIST.md — a CLA or DCO decision is
-part of it). Until then, issues and discussion are welcome; pull requests may not be merged.
+Thanks for helping. Migrate Anything is licensed under [Apache-2.0](LICENSE). Anything you
+contribute is accepted under that same license (section 5 of the license), so only send work you
+have the right to contribute. No separate contributor agreement is asked for today; the owner may
+add a sign-off requirement later (see docs/LICENSE_DECISION_CHECKLIST.md).
 
 ## Development
 

@@ -3,7 +3,7 @@ name = "ma-example-api"
 description = "FieldOps Legacy Service: a self-contained fake API used by end-to-end discovery tests."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [lib]

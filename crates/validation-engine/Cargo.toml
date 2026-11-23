@@ -3,7 +3,7 @@ name = "ma-validation"
 description = "Evidence-based verification, reconciliation and migration reports."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

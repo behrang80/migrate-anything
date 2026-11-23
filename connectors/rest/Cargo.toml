@@ -3,7 +3,7 @@ name = "ma-connector-rest"
 description = "Trusted runtime that executes declarative REST connector specifications."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

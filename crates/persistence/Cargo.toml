@@ -3,7 +3,7 @@ name = "ma-persistence"
 description = "SQLite-backed workspace state for Migrate Anything."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

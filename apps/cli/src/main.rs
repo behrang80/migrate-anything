@@ -115,7 +115,13 @@ enum Cmd {
 #[derive(Subcommand)]
 enum McpCmd {
     /// Serve MCP over stdio (for Claude Code, Cursor, ...)
-    Serve,
+    Serve {
+        /// Folder the AI agent may register as a file connection, or read API documents from
+        /// (repeatable; also MA_AGENT_DIRS). Without any, the agent cannot point the tool at
+        /// local files: you add file connections yourself, in Studio or with `connections add`.
+        #[arg(long = "allow-dir", value_name = "FOLDER")]
+        allow_dirs: Vec<PathBuf>,
+    },
     /// List the MCP tools
     Tools,
 }
@@ -368,7 +374,9 @@ async fn run(cli: Cli) -> Result<()> {
                 bail!("doctor found problems");
             }
         }
-        Cmd::Mcp { cmd: McpCmd::Serve } => {
+        Cmd::Mcp { cmd: McpCmd::Serve { allow_dirs } } => {
+            let mut app = app;
+            app.allow_agent_dirs(allow_dirs).map_err(ma)?;
             ma_mcp::serve_stdio(Arc::new(app)).await.map_err(|e| anyhow!("{e}"))?;
         }
         Cmd::Mcp { cmd: McpCmd::Tools } => unreachable!(),

@@ -1406,7 +1406,13 @@ function drawPlan(id, data, state, render, alive) {
     );
     panel.append(h("div", { class: "panel-title" }, h("h2", {}, icon("shield"), approved ? "Approved" : "Approve this plan")), summaryList);
     if (approved) {
-      const start = h("button", { class: "btn primary big", type: "button", onclick: () => busy(start, async () => go(`#/job/${(await api("POST", "/jobs", { plan_id: id })).job_id}`)) }, icon("play"), "Start the migration");
+      // Re-approving a plan whose migration stopped part-way: lead back to that migration
+      // instead of offering to start a second one from the first record.
+      const stopped = S.resume && S.resume.plan === id ? S.resume.job : null;
+      const start = stopped
+        ? h("a", { class: "btn primary big", href: `#/job/${stopped}`, onclick: () => (S.resume = null) }, icon("play"), "Back to the stopped migration")
+        : h("button", { class: "btn primary big", type: "button", onclick: () => busy(start, async () => go(`#/job/${(await api("POST", "/jobs", { plan_id: id })).job_id}`)) }, icon("play"), "Start the migration");
+      if (stopped) panel.append(notice("info", "This plan already has a migration that stopped part-way. Go back to it and continue from where it stopped."));
       panel.append(h("div", { class: "row" }, start, h("button", { class: "btn ghost", type: "button", onclick: () => ((state.stage = 3), render()) }, icon("left"), "Back to the plan")));
     } else if (!summary.approvable) {
       panel.append(notice("bad", "This plan has issues that must be fixed before it can be approved."), h("button", { class: "btn", type: "button", onclick: () => ((state.stage = 3), render()) }, icon("left"), "Back to the plan"));
@@ -1628,7 +1634,20 @@ async function viewJob(alive, id, replayRoute) {
       ...(job.status === "completed" && !replaying && !catchingUp() ? [h("button", { class: "btn ghost", type: "button", title: "Play this run back from the start", onclick: replay }, icon("refresh"), "Watch it again")] : []),
       ...(["running", "paused", "pending"].includes(job.status) ? [h("button", { class: "btn danger", type: "button", onclick: act("cancel", "Records already written stay in the destination and are listed in the report. You can start a new migration later.") }, icon("stop"), "Cancel")] : []),
     );
-    errorBox.replaceChildren(job.status === "failed" && job.error ? notice("bad", h("strong", {}, "The migration stopped. "), job.error, h("div", { class: "faint", style: "margin-top:6px" }, "Nothing is lost: it continues from the last saved point when you try again.")) : "");
+    // An approval can run out (or be withdrawn) while a migration is paused. Nothing is written
+    // without one; approving the same plan again lets this migration continue.
+    const needsApproval = /Approve the plan again/.test(job.error || "");
+    errorBox.replaceChildren(
+      job.status === "failed" && job.error
+        ? notice(
+            "bad",
+            h("strong", {}, "The migration stopped. "),
+            needsApproval ? "Its approval is no longer valid: it ran out or was withdrawn. Approve the plan again, then come back here and continue." : job.error,
+            needsApproval ? h("div", { style: "margin-top:10px" }, h("a", { class: "btn primary", href: `#/plan/${job.plan_id}/approve`, onclick: () => (S.resume = { plan: job.plan_id, job: job.job_id }) }, icon("shield"), "Approve the plan again")) : null,
+            h("div", { class: "faint", style: "margin-top:6px" }, "Nothing is lost: it continues from the last saved point when you try again."),
+          )
+        : "",
+    );
 
     // counts are announced every few seconds; a change of status is announced at once
     if (now - lastAnnounce > 5000 || job.status !== lastStatus) {

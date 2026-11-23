@@ -55,9 +55,9 @@ async fn approved_plan_refuses_a_retargeted_connection() {
     env.files_conn("dst", &elsewhere, "jsonl", Environment::Production).await;
     let e = env.app.run_worker(&job.job_id).await.unwrap_err();
     assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
-    assert!(e.message.contains("no longer matches the approved plan"), "{}", e.message);
+    assert!(e.message.contains("no longer matches this plan"), "{}", e.message);
     let e = env.app.start_job(&plan, SpawnMode::Inline, Actor::Cli).await.unwrap_err();
-    assert!(e.message.contains("no longer matches the approved plan"), "{}", e.message);
+    assert!(e.message.contains("no longer matches this plan"), "{}", e.message);
     assert!(!elsewhere.join("items.jsonl").exists(), "nothing was written to the new target");
     assert!(!env.dir.path().join("dst/items.jsonl").exists());
     // changing only the environment label is also refused
@@ -473,6 +473,182 @@ async fn sandbox_fails_closed_when_an_extension_is_tampered_with() {
     assert!(!p3.approvable && p3.blocking_risks.iter().any(|r| r.contains("unknown_extension")));
 }
 
+/// Regression: what an agent registers on its own must not widen what this computer reads or
+/// reaches. It may register folders the operator opened to it and public web APIs; no other
+/// folder, no database host, no private network address.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_cannot_widen_what_the_tool_reads_or_reaches() {
+    let mut env = TestEnv::new().await;
+    let files = |name: &str, path: &std::path::Path| ConnectionConfig {
+        name: name.into(),
+        kind: "files".into(),
+        environment: Environment::Test,
+        settings: json!({"path": path, "format": "csv"}),
+        credential_ref: None,
+        allowed_hosts: vec![],
+        connector_ref: None,
+    };
+    let private = env.path("private");
+    std::fs::write(private.join("salaries.csv"), "id,amount\n1,100\n").unwrap();
+    std::fs::write(private.join("notes.json"), "{}").unwrap();
+
+    // by default no folder is open to agents
+    let e = env.app.add_connection(files("a", &private), Actor::Mcp).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
+    assert!(e.message.contains("none are open") && e.message.contains("--allow-dir"), "{}", e.message);
+    assert!(env.app.store.get_connection("a").await.is_err(), "connection was not created");
+
+    // the operator opens one folder: the agent can use it, including a subfolder that does not exist yet
+    let shared = env.path("shared");
+    std::fs::write(shared.join("items.csv"), "id,name\n1,a\n").unwrap();
+    std::fs::write(shared.join("openapi.json"), "{}").unwrap();
+    env.app.allow_agent_dirs([shared.clone()]).unwrap();
+    env.app.add_connection(files("inside", &shared), Actor::Mcp).await.unwrap();
+    env.app.add_connection(files("new-subfolder", &shared.join("out").join("2026")), Actor::Mcp).await.unwrap();
+    assert_eq!(env.app.discover("inside", Actor::Mcp).await.unwrap().schema.objects.len(), 1);
+
+    // everything else stays closed, however the path is written
+    let attempts = [
+        ("b", private.clone()),
+        ("c", shared.join("..").join("private")),
+        ("d", shared.join("missing").join("..").join("..").join("private")),
+        ("e", env.dir.path().to_path_buf()),
+    ];
+    for (name, path) in attempts {
+        let e = env.app.add_connection(files(name, &path), Actor::Mcp).await.unwrap_err();
+        assert!(matches!(e.class, ErrorClass::Policy | ErrorClass::Validation), "{name}: {}", e.message);
+        assert!(env.app.store.get_connection(name).await.is_err(), "{name} was not created");
+    }
+
+    // a local file can be read as an API description only inside the opened folders
+    let read_doc = |path: std::path::PathBuf| GenerateConnectorRequest {
+        source: DocumentSource::File { path: path.to_string_lossy().into_owned() },
+        connector_id: "some-api".into(),
+        attach_to_connection: None,
+    };
+    let e = env.app.generate_connector(&read_doc(private.join("notes.json")), Actor::Mcp).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
+    assert!(e.message.contains("outside the folders"), "{}", e.message);
+    let e = env.app.generate_connector(&read_doc(shared.join("openapi.json")), Actor::Mcp).await.unwrap_err();
+    assert_ne!(e.class, ErrorClass::Policy, "inside the folder the file is read (and rejected as not being OpenAPI): {}", e.message);
+
+    // database hosts and private network addresses are the operator's to add
+    let pg = ConnectionConfig {
+        name: "db".into(),
+        kind: "postgres".into(),
+        environment: Environment::Test,
+        settings: json!({"url": "postgres://app@10.0.0.5:5432/crm"}),
+        credential_ref: None,
+        allowed_hosts: vec![],
+        connector_ref: None,
+    };
+    let e = env.app.add_connection(pg.clone(), Actor::Mcp).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
+    assert!(e.message.contains("added by the operator"), "{}", e.message);
+    let rest = |private_net: J| ConnectionConfig {
+        name: "intranet".into(),
+        kind: "rest".into(),
+        environment: Environment::Test,
+        settings: json!({"base_url": "http://10.0.0.5:8080", "allow_private_network": private_net}),
+        credential_ref: None,
+        allowed_hosts: vec!["10.0.0.5".into()],
+        connector_ref: None,
+    };
+    for value in [json!(true), json!("true"), json!(1)] {
+        let e = env.app.add_connection(rest(value), Actor::Mcp).await.unwrap_err();
+        assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
+        assert!(e.message.contains("only the operator"), "{}", e.message);
+    }
+    assert!(env.app.store.get_connection("db").await.is_err() && env.app.store.get_connection("intranet").await.is_err());
+
+    // the operator is not limited by any of this
+    env.app.add_connection(files("op-files", &private), Actor::Cli).await.unwrap();
+    env.app.add_connection(pg, Actor::Cli).await.unwrap();
+    env.app.add_connection(rest(json!(true)), Actor::Cli).await.unwrap();
+}
+
+/// Regression: an agent may give a connection its first connector, but it must not replace the
+/// connector a connection already uses. The connector decides which paths of the operator's
+/// system are called with the operator's credential.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_cannot_replace_the_connector_of_a_connection() {
+    let env = TestEnv::new().await;
+    let api = ma_example_api::start(Default::default()).await.unwrap();
+    env.app.set_credential("k", "test-key-123").await.unwrap();
+    env.app
+        .add_connection(
+            ConnectionConfig {
+                name: "prod".into(),
+                kind: "rest".into(),
+                environment: Environment::Production,
+                settings: json!({"base_url": api.base_url, "allow_private_network": true}),
+                credential_ref: Some("k".into()),
+                allowed_hosts: vec!["127.0.0.1".into()],
+                connector_ref: None,
+            },
+            Actor::Cli,
+        )
+        .await
+        .unwrap();
+    let request = |id: &str| GenerateConnectorRequest {
+        source: DocumentSource::Url { url: format!("{}/openapi.json", api.base_url), connection: "prod".into() },
+        connector_id: id.into(),
+        attach_to_connection: Some("prod".into()),
+    };
+    let attached = async || env.app.store.get_connection("prod").await.unwrap().connector_ref;
+
+    // the first connector: the normal flow, allowed
+    let first = env.app.generate_connector(&request("fieldops"), Actor::Mcp).await.unwrap();
+    assert_eq!(attached().await, Some(first.connector_ref.clone()));
+    // the same document again changes nothing and is not an error
+    let again = env.app.generate_connector(&request("fieldops"), Actor::Mcp).await.unwrap();
+    assert!(again.reused_existing);
+    assert_eq!(attached().await, Some(first.connector_ref.clone()));
+
+    // a different connector for the same connection: refused, and nothing is left behind
+    let registered = env.app.connector_registry().await.unwrap().len();
+    let e = env.app.generate_connector(&request("other-api"), Actor::Mcp).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
+    assert!(e.message.contains("only the operator can replace it"), "{}", e.message);
+    assert_eq!(attached().await, Some(first.connector_ref.clone()), "the connection still uses its connector");
+    assert_eq!(env.app.connector_registry().await.unwrap().len(), registered, "the refused draft was not registered");
+
+    // the operator can replace it
+    let replaced = env.app.generate_connector(&request("other-api"), Actor::Cli).await.unwrap();
+    assert_ne!(replaced.connector_ref, first.connector_ref);
+    assert_eq!(attached().await, Some(replaced.connector_ref.clone()));
+    let audit = env.app.store.audit_events(100).await.unwrap();
+    assert!(audit.iter().any(|e| e.action == "connection.connector_attached" && e.actor == "mcp-agent"));
+    assert!(audit.iter().any(|e| e.action == "connection.connector_attached" && e.actor.starts_with("cli:")));
+
+    // a connection that is not a web API cannot take a connector; refused before anything is fetched
+    env.files_conn("folder", &env.path("folder"), "csv", Environment::Test).await;
+    let mut wrong = request("third-api");
+    wrong.attach_to_connection = Some("folder".into());
+    let e = env.app.generate_connector(&wrong, Actor::Mcp).await.unwrap_err();
+    assert!(e.message.contains("only be attached to `rest`"), "{}", e.message);
+}
+
+/// Regression: a dry run is evidence for the approval decision, so it must read the system the
+/// plan describes. Once the source connection points somewhere else, the dry run is refused
+/// instead of reporting on other data.
+#[tokio::test(flavor = "multi_thread")]
+async fn dry_run_refuses_a_source_that_is_no_longer_the_planned_one() {
+    let env = TestEnv::new().await;
+    let plan = simple_setup(&env).await;
+    env.app.dry_run(&plan, 10).await.unwrap();
+    let other = env.path("other_src");
+    std::fs::write(other.join("items.csv"), "id,name\n9,z\n").unwrap();
+    env.files_conn("src", &other, "csv", Environment::Production).await;
+    let e = env.app.dry_run(&plan, 10).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Policy, "{}", e.message);
+    assert!(e.message.contains("no longer matches this plan"), "{}", e.message);
+    assert!(env.app.preview_plan(&plan, true, 10).await.is_err(), "the preview does not run it either");
+    // pointing it back makes the plan usable again
+    env.files_conn("src", &env.path("src"), "csv", Environment::Production).await;
+    env.app.dry_run(&plan, 10).await.unwrap();
+}
+
 // ------------------------------------------------------------------ MCP over stdio
 
 struct Mcp {
@@ -483,10 +659,14 @@ struct Mcp {
 
 impl Mcp {
     fn start(home: &std::path::Path) -> Mcp {
+        Mcp::start_with(home, &[])
+    }
+    fn start_with(home: &std::path::Path, serve_args: &[&str]) -> Mcp {
         let mut child = Command::new(env!("CARGO_BIN_EXE_migrate-anything"))
             .arg("--home")
             .arg(home)
             .args(["mcp", "serve"])
+            .args(serve_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -566,4 +746,40 @@ async fn mcp_stdio_session_cannot_approve_or_write() {
     assert!(is_err && text.contains("Policy"), "{text}");
     assert!(!env.dir.path().join("dst/items.jsonl").exists());
     let _ = mcp.child.kill();
+}
+
+/// The same limits through a real MCP session: the server is started with one folder opened to
+/// the agent, and only that folder can be registered.
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_stdio_agent_can_only_register_folders_the_operator_opened() {
+    let env = TestEnv::new().await;
+    let shared = env.path("shared");
+    std::fs::write(shared.join("items.csv"), "id,name\n1,a\n2,b\n").unwrap();
+    let private = env.path("private");
+    std::fs::write(private.join("salaries.csv"), "id,amount\n1,100\n").unwrap();
+    let mut mcp = Mcp::start_with(&env.home(), &["--allow-dir", shared.to_str().unwrap()]);
+    mcp.request("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "1"}}));
+    mcp.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+    let define = |kind: &str, settings: J| json!({"kind": kind, "environment": "test", "settings": settings});
+
+    let (is_err, text) = mcp.call(
+        "migrate_system_discover",
+        json!({"connection": "pay", "define": define("files", json!({"path": private, "format": "csv"}))}),
+    );
+    assert!(is_err && text.contains("Policy") && text.contains("outside the folders"), "{text}");
+    assert!(!text.contains("amount"), "nothing of the folder was read: {text}");
+
+    let (is_err, text) = mcp
+        .call("migrate_system_discover", json!({"connection": "ok", "define": define("files", json!({"path": shared, "format": "csv"}))}));
+    assert!(!is_err, "{text}");
+    assert!(text.contains("\"items\""), "{text}");
+
+    let (is_err, text) = mcp.call(
+        "migrate_system_discover",
+        json!({"connection": "db", "define": define("postgres", json!({"url": "postgres://app@127.0.0.1:5432/crm"}))}),
+    );
+    assert!(is_err && text.contains("added by the operator"), "{text}");
+    let _ = mcp.child.kill();
+    assert!(env.app.store.get_connection("pay").await.is_err() && env.app.store.get_connection("db").await.is_err());
+    assert!(env.app.store.get_connection("ok").await.is_ok());
 }

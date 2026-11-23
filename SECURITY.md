@@ -12,6 +12,7 @@ and reproduction steps without real credentials or customer data.
 |---|---|---|
 | No writes without human approval | Jobs require an HMAC-SHA256-signed approval bound to plan id + SHA-256 plan hash, source/destination identity, connector versions, permitted operations, operator, target environment, expiry. Re-verified by the worker. | `demo_security.rs` |
 | Agents cannot retarget or leak credentials | Over MCP an agent can only register *new* connections *without* credentials; attaching a credential or changing an existing connection requires the operator's CLI. At job start, in the worker and in verification the live system identity, connector version and environment must equal the approved plan's. | `demo_security.rs` |
+| Agents cannot widen what the tool reads or reaches | A connection an agent registers by itself can be a folder inside one the operator opened (`mcp serve --allow-dir`, `MA_AGENT_DIRS`; none by default; paths are resolved through `..` and symbolic links before the check) or a public web API. Database connections, `allow_private_network` and local documents outside the opened folders are refused. An agent can give a connection its first connector but cannot replace the one it uses. | `demo_security.rs` (in-process and over a real MCP session) |
 | Agents cannot approve | `migrate_plan_approve` (MCP) only records a request. Approvals are created only by `plan approve` on an interactive terminal with a one-time code; non-TTY invocations are refused. | `demo_security.rs` (non-interactive CLI, MCP session) |
 | Approving in Studio | Studio (the local web interface) can approve only when it was started from an interactive terminal. Approving prints a one-time 6-character code **in that terminal**; the browser has to send it back. The code is valid for 5 minutes and 5 attempts, works once, and is bound to one plan (or one connector activation). Something that can reach the HTTP port but cannot read the terminal cannot approve. Started without a terminal, Studio offers no approval at all. | `studio_ui.rs` |
 | Studio's HTTP surface | Listens on 127.0.0.1 only. A random 192-bit session token is delivered in the start link and kept in an `HttpOnly`, `SameSite=Strict` cookie; every API call requires it. The `Host` header must be `127.0.0.1` or `localhost` on Studio's port (DNS rebinding), and every state-changing request must carry a same-origin `Origin` (cross-site requests). Strict Content-Security-Policy; the page loads no third-party scripts, fonts or other resources. | `studio_ui.rs` |
@@ -38,8 +39,13 @@ and reproduction steps without real credentials or customer data.
   terminal's output as the same OS user is inside the same boundary as above. The token is
   valid only while that Studio process runs; a new one is created at every start.
 * The REST runtime uses rustls with the platform verifier; certificate pinning is not offered.
-* Dependency auditing (`cargo audit`, `cargo deny`) runs in CI; it was not executed on the
-  development machine for this release candidate.
+* Dependency auditing runs in CI. `cargo deny` (licenses, banned crates, sources) was also run
+  locally and passes; `cargo audit` was not run locally. The CI run of 2026-11-23 reported one
+  advisory as a warning: `chrono` is flagged as unmaintained (RUSTSEC-2026-0543), with no fixed
+  version available.
+* **An agent can read what you open to it.** Folders given with `--allow-dir` and every
+  connection you add can be profiled by the agent, including example values when it asks for
+  them. Open only what the migration needs.
 * Exception archives and the state database contain migrated values (by design, nothing is
   silently dropped). Protect the workspace directory like the source data and apply your
   retention policy to `~/.migrate-anything`.

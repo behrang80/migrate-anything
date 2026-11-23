@@ -2,7 +2,7 @@
   "mcpServers": {
     "migrate-anything": {
       "command": "migrate-anything",
-      "args": ["mcp", "serve"],
+      "args": ["mcp", "serve", "--allow-dir", "${HOME}/migration-data"],
       "env": { "MA_HOME": "${HOME}/.migrate-anything" }
     }
   }

@@ -199,7 +199,38 @@ impl Value {
         Value::String(s.to_string())
     }
 
+    /// Read text from a source column whose type was only *inferred* (CSV), without changing
+    /// what the text says.
+    ///
+    /// The type of a CSV column is guessed from a sample of its first rows. A later row can hold
+    /// text that the guessed type would alter: `01067` or `+46701112233` in a column that looked
+    /// like integers, or a date with a time in a column that looked like dates. Converting those
+    /// would silently drop the leading zero, the plus sign or the time, so they are kept exactly
+    /// as they are instead (as text, or as the date-time they are). Text that is not a value of
+    /// the type at all is still reported as [`Value::Invalid`].
+    pub fn parse_lossless(s: &str, ty: FieldType) -> Value {
+        match ty {
+            FieldType::Int => match s.parse::<i64>() {
+                Ok(i) if i.to_string() == s => Value::Int(i),
+                // "007", "+46701112233", "-0": a number, but not this text
+                Ok(_) => Value::String(s.to_string()),
+                // padded with spaces
+                Err(_) if s.trim().parse::<i64>().is_ok() => Value::String(s.to_string()),
+                Err(_) => Value::parse_as(s, ty),
+            },
+            FieldType::Date => match parse_temporal(s.trim()) {
+                Some(dt @ Value::DateTime(_)) => dt,
+                _ => Value::parse_as(s, ty),
+            },
+            _ => Value::parse_as(s, ty),
+        }
+    }
+
     /// Parse text as the requested type, producing [`Value::Invalid`] rather than failing.
+    ///
+    /// This is a conversion: it accepts `007` as the integer 7 and cuts the time off a date-time
+    /// asked for as a date. Use it where a conversion was asked for (an explicit cast, a typed
+    /// database column, comparing values); use [`Value::parse_lossless`] when reading source text.
     pub fn parse_as(s: &str, ty: FieldType) -> Value {
         let invalid = |reason: &str| Value::Invalid { raw: s.to_string(), reason: reason.to_string() };
         match ty {
@@ -330,6 +361,34 @@ mod tests {
         assert_ne!(Value::Null, Value::String(String::new()));
         assert_ne!(Value::Array(vec![]), Value::Null);
         assert_eq!(Value::infer_from_text(""), Value::String(String::new()));
+    }
+
+    /// Regression: rows beyond the sample a CSV column type was inferred from must not be
+    /// altered by that type (ZIP codes with a leading zero, phone numbers, dates with a time).
+    #[test]
+    fn reading_an_inferred_column_never_changes_the_text() {
+        use FieldType::*;
+        assert_eq!(Value::parse_lossless("10115", Int), Value::Int(10115));
+        assert_eq!(Value::parse_lossless("-7", Int), Value::Int(-7));
+        for kept in ["01067", "+46701112233", "-0", " 12", "12 "] {
+            assert_eq!(Value::parse_lossless(kept, Int), Value::String(kept.into()), "`{kept}` must stay exactly as written");
+            assert_eq!(Value::parse_lossless(kept, Int).to_text().as_deref(), Some(kept));
+        }
+        assert!(matches!(Value::parse_lossless("abc", Int), Value::Invalid { .. }), "not a number at all is still reported");
+        assert!(matches!(Value::parse_lossless("12.5", Int), Value::Invalid { .. }));
+
+        assert!(matches!(Value::parse_lossless("2024-01-05", Date), Value::Date(_)));
+        match Value::parse_lossless("2024-01-05T10:30:00Z", Date) {
+            Value::DateTime(dt) => assert_eq!(dt.to_rfc3339(), "2024-01-05T10:30:00+00:00", "the time is kept"),
+            other => panic!("expected the date-time to survive, got {other:?}"),
+        }
+        assert!(matches!(Value::parse_lossless("soon", Date), Value::Invalid { .. }));
+        // the converting parser still converts, for explicit casts
+        assert_eq!(Value::parse_as("007", Int), Value::Int(7));
+        assert!(matches!(Value::parse_as("2024-01-05T10:30:00Z", Date), Value::Date(_)));
+        // other types are unchanged
+        assert_eq!(Value::parse_lossless("12.50", Decimal), Value::Decimal("12.50".into()));
+        assert_eq!(Value::parse_lossless("x", String), Value::String("x".into()));
     }
 
     #[test]

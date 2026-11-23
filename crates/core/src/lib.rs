@@ -31,6 +31,8 @@ pub struct App {
     home: PathBuf,
     master_key: Key,
     approval_key: Key,
+    /// Folders the operator has opened to AI agents: (as given, real location).
+    agent_dirs: Vec<(PathBuf, PathBuf)>,
 }
 
 /// Who is calling: used for audit events. Agents are always recorded as such.
@@ -70,7 +72,49 @@ impl App {
         let store = Store::open(&home.join("state.db"), "default").await?;
         let master_key = keys::load_or_create(&home.join("keys").join("secrets.key"))?;
         let approval_key = keys::load_or_create(&home.join("keys").join("approvals.key"))?;
-        Ok(App { store, home: home.to_path_buf(), master_key, approval_key })
+        let mut app = App { store, home: home.to_path_buf(), master_key, approval_key, agent_dirs: vec![] };
+        if let Some(list) = std::env::var_os("MA_AGENT_DIRS") {
+            app.allow_agent_dirs(std::env::split_paths(&list).filter(|d| !d.as_os_str().is_empty()))?;
+        }
+        Ok(app)
+    }
+
+    /// Open folders to AI agents (MCP clients). An agent can register a file connection, or
+    /// read an API document, only inside these folders; without any it cannot point the tool at
+    /// local files at all. The operator sets them when starting the MCP server
+    /// (`mcp serve --allow-dir <folder>`, or `MA_AGENT_DIRS`).
+    pub fn allow_agent_dirs(&mut self, dirs: impl IntoIterator<Item = PathBuf>) -> MaResult<()> {
+        for d in dirs {
+            let real = std::fs::canonicalize(&d).map_err(|e| MaError::config(format!("folder for AI agents `{}`: {e}", d.display())))?;
+            if !real.is_dir() {
+                return Err(MaError::config(format!("folder for AI agents `{}` is not a folder", d.display())));
+            }
+            if !self.agent_dirs.iter().any(|(_, r)| r == &real) {
+                self.agent_dirs.push((std::path::absolute(&d).unwrap_or(d), real));
+            }
+        }
+        Ok(())
+    }
+
+    /// The folders opened to AI agents, as the operator gave them.
+    pub fn agent_dirs(&self) -> Vec<&Path> {
+        self.agent_dirs.iter().map(|(given, _)| given.as_path()).collect()
+    }
+
+    /// Refuse a local path an agent asked for unless it lies inside a folder opened to agents.
+    fn agent_may_use_path(&self, path: &str, what: &str) -> MaResult<()> {
+        let real = real_path(Path::new(path))?;
+        if self.agent_dirs.iter().any(|(_, dir)| real.starts_with(dir)) {
+            return Ok(());
+        }
+        let open = match self.agent_dirs() {
+            dirs if dirs.is_empty() => "none are open".to_string(),
+            dirs => format!("open: {}", dirs.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", ")),
+        };
+        Err(MaError::policy(format!(
+            "{what} `{path}` is outside the folders the operator has opened to AI agents ({open}). The operator can open a folder by \
+             starting the MCP server with `--allow-dir <folder>`, or do this step themselves in Studio or with the CLI"
+        )))
     }
 
     pub fn home(&self) -> &Path {
@@ -124,6 +168,29 @@ impl App {
                     "connection `{}` already exists; only the operator can change it (migrate-anything connections add)",
                     c.name
                 )));
+            }
+            // An agent must not be able to widen what this computer reads or reaches. It may
+            // register folders the operator opened to it and public web APIs; everything that
+            // points at the local network is the operator's to add.
+            match c.kind.as_str() {
+                "files" => {
+                    if let Some(p) = c.settings.get("path").and_then(|p| p.as_str()) {
+                        self.agent_may_use_path(p, "folder")?;
+                    }
+                }
+                "postgres" => {
+                    return Err(MaError::policy(format!(
+                        "database connections are added by the operator (they choose a network host and usually need a password): in \
+                         Studio, or with `migrate-anything connections add {} --kind postgres --settings ...`",
+                        c.name
+                    )));
+                }
+                "rest" if c.settings.get("allow_private_network").is_some_and(|v| v != &json!(false)) => {
+                    return Err(MaError::policy(
+                        "only the operator can let a connection reach private or local network addresses (allow_private_network)",
+                    ));
+                }
+                _ => {}
             }
         }
         let mut c = c;
@@ -299,9 +366,12 @@ impl App {
     }
 
     // ================================================================= connector factory
-    async fn fetch_document(&self, source: &DocumentSource) -> MaResult<Vec<u8>> {
+    async fn fetch_document(&self, source: &DocumentSource, actor: Actor) -> MaResult<Vec<u8>> {
         match source {
             DocumentSource::File { path } => {
+                if actor == Actor::Mcp {
+                    self.agent_may_use_path(path, "document")?;
+                }
                 let meta = std::fs::metadata(path).map_err(|e| MaError::not_found(format!("{path}: {e}")))?;
                 if meta.len() > 20 * 1024 * 1024 {
                     return Err(MaError::validation("document too large"));
@@ -337,12 +407,16 @@ impl App {
 
     pub async fn generate_connector(&self, req: &GenerateConnectorRequest, actor: Actor) -> MaResult<GenerateConnectorResponse> {
         // 1. registry first: reuse an existing connector generated from the identical document
-        let bytes = self.fetch_document(&req.source).await?;
+        if let Some(conn) = &req.attach_to_connection {
+            // fail before anything is fetched or registered if the target cannot take a connector
+            self.attachable(conn).await?;
+        }
+        let bytes = self.fetch_document(&req.source, actor).await?;
         let sha = ma_types::hash::sha256_hex(&bytes);
         for row in self.store.list_connector_versions().await? {
             if row.spec.provenance.source_document_sha256.as_deref() == Some(sha.as_str()) && row.connector_id == req.connector_id {
                 if let Some(conn) = &req.attach_to_connection {
-                    self.attach_connector(conn, &row.spec.reference()).await?;
+                    self.attach_connector(conn, &row.spec.reference(), actor).await?;
                 }
                 return Ok(GenerateConnectorResponse {
                     connector_ref: row.spec.reference(),
@@ -368,10 +442,14 @@ impl App {
         if !generated.validation_errors.is_empty() {
             return Err(MaError::validation(format!("generated spec failed validation: {}", generated.validation_errors.join("; "))));
         }
-        self.store.put_connector_version(&generated.spec, &generated.manifest, ConnectorStatus::Draft).await?;
         let reference = generated.spec.reference();
         if let Some(conn) = &req.attach_to_connection {
-            self.attach_connector(conn, &reference).await?;
+            // checked before the draft is registered, so a refusal leaves nothing behind
+            self.may_attach(&self.attachable(conn).await?, &reference, actor)?;
+        }
+        self.store.put_connector_version(&generated.spec, &generated.manifest, ConnectorStatus::Draft).await?;
+        if let Some(conn) = &req.attach_to_connection {
+            self.attach_connector(conn, &reference, actor).await?;
         }
         self.store
             .audit(
@@ -393,13 +471,39 @@ impl App {
         })
     }
 
-    async fn attach_connector(&self, connection: &str, reference: &str) -> MaResult<()> {
-        let mut c = self.store.get_connection(connection).await?;
+    /// The connection a generated connector is to be attached to; it must be a `rest` one.
+    async fn attachable(&self, connection: &str) -> MaResult<ConnectionConfig> {
+        let c = self.store.get_connection(connection).await?;
         if c.kind != "rest" {
             return Err(MaError::validation("generated connectors can only be attached to `rest` connections"));
         }
+        Ok(c)
+    }
+
+    /// An agent may give a connection its *first* connector. Replacing the connector a
+    /// connection already uses is an operator action: the connector decides which paths of the
+    /// operator's system are called (with the operator's credential, if the connection has one),
+    /// and swapping it would also invalidate plans approved for that connection.
+    fn may_attach(&self, c: &ConnectionConfig, reference: &str, actor: Actor) -> MaResult<()> {
+        match &c.connector_ref {
+            Some(current) if actor == Actor::Mcp && current != reference => Err(MaError::policy(format!(
+                "connection `{}` already uses connector `{current}`; only the operator can replace it (in Studio, or with \
+                 `migrate-anything connectors generate`)",
+                c.name
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    async fn attach_connector(&self, connection: &str, reference: &str, actor: Actor) -> MaResult<()> {
+        let mut c = self.attachable(connection).await?;
+        self.may_attach(&c, reference, actor)?;
+        if c.connector_ref.as_deref() == Some(reference) {
+            return Ok(());
+        }
         c.connector_ref = Some(reference.to_string());
-        self.store.put_connection(&c).await
+        self.store.put_connection(&c).await?;
+        self.store.audit(&actor.label(), "connection.connector_attached", Some(connection), json!({"connector": reference})).await
     }
 
     /// Register a hand-written declarative spec (validated exactly like generated ones).
@@ -634,7 +738,9 @@ impl App {
 
     pub async fn dry_run(&self, plan_id: &str, sample: usize) -> MaResult<DryRunReport> {
         let sp = self.store.get_plan(plan_id).await?;
-        let (_, sh, _) = self.connect(&sp.plan.source.connection).await?;
+        // The dry run is evidence for the approval decision, so it must read the system the plan
+        // describes, not whatever the connection name points at today.
+        let sh = self.connect_endpoint(&sp.plan.source).await?;
         let ext = self.load_extensions(&sp.plan).await?;
         let report = ma_execution::dryrun::dry_run(&sp.plan, &sp.plan_hash, &sh, ext.as_deref(), sample).await?;
         self.store.put_dry_run(&report, plan_id).await?;
@@ -777,14 +883,14 @@ impl App {
 
     /// Connect a plan endpoint and prove it is still the system the plan (and its approval) was
     /// made for. A connection that was re-pointed, re-typed or given another connector after
-    /// planning is refused: the approval is bound to systems, not to connection names.
+    /// planning is refused: plans and approvals are bound to systems, not to connection names.
     async fn connect_endpoint(&self, ep: &PlanEndpoint) -> MaResult<ConnectorHandle> {
         let (cfg, handle, cref) = self.connect(&ep.connection).await?;
         let live = handle.connector.identify();
         let same_system = live.kind == ep.identity.kind && live.name == ep.identity.name && live.locator == ep.identity.locator;
         if !same_system || cref != ep.connector || cfg.environment != ep.environment {
             return Err(MaError::policy(format!(
-                "connection `{}` no longer matches the approved plan (planned: {} at {} [{}], connector {}@{}; now: {} at {} [{}], connector {}@{}). Create and approve a new plan.",
+                "connection `{}` no longer matches this plan (planned: {} at {} [{}], connector {}@{}; now: {} at {} [{}], connector {}@{}). Create a new plan and have it approved.",
                 ep.connection,
                 ep.identity.name,
                 ep.identity.locator,
@@ -858,8 +964,22 @@ impl App {
                     // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: survives the parent (MCP client)
                     cmd.creation_flags(0x0000_0008 | 0x0000_0200);
                 }
-                let child = cmd.spawn().map_err(|e| MaError::internal(format!("could not start worker: {e}")))?;
-                self.store.audit(&Actor::Worker.label(), "job.worker_spawned", Some(job_id), json!({"pid": child.id()})).await?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    // Its own process group: Ctrl+C in the terminal that runs Studio or the CLI,
+                    // and a client that stops its whole process group, do not stop the migration.
+                    cmd.process_group(0);
+                }
+                let mut child = cmd.spawn().map_err(|e| MaError::internal(format!("could not start worker: {e}")))?;
+                let pid = child.id();
+                // Collect the worker's exit status when it ends. Nothing here depends on it, but a
+                // long-running Studio or MCP server would otherwise keep one finished-process
+                // entry per job on Unix until it exits itself.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                self.store.audit(&Actor::Worker.label(), "job.worker_spawned", Some(job_id), json!({"pid": pid})).await?;
                 Ok(())
             }
             SpawnMode::Inline => Ok(()),
@@ -904,7 +1024,27 @@ impl App {
             return Err(MaError::policy("plan changed after the job was created"));
         }
         let approval = self.store.get_approval(&self.store.job_approval_id(job_id).await?).await?;
-        ma_security::approval::verify(&self.approval_key, &approval, &sp.plan, &sp.plan_hash, &sp.plan.operations)?;
+        if let Err(stale) = ma_security::approval::verify(&self.approval_key, &approval, &sp.plan, &sp.plan_hash, &sp.plan.operations) {
+            // The approval this job started under is no longer valid; typically it expired while
+            // the job was paused. That must not strand a half-finished migration: when the
+            // operator has approved this exact plan again, the job continues under that approval.
+            // Without one, nothing is written.
+            let Ok(renewed) = self.valid_approval(&sp.plan, &sp.plan_hash).await else {
+                return Err(MaError::policy(format!(
+                    "{} (approval {} of plan {}). Approve the plan again, then resume this job: migrate-anything plan approve {}",
+                    stale.message, approval.claims.approval_id, sp.plan.plan_id, sp.plan.plan_id
+                )));
+            };
+            self.store.set_job_approval(job_id, &renewed.claims.approval_id).await?;
+            self.store
+                .audit(
+                    &Actor::Worker.label(),
+                    "job.approval_renewed",
+                    Some(job_id),
+                    json!({"from": approval.claims.approval_id, "to": renewed.claims.approval_id, "reason": stale.message}),
+                )
+                .await?;
+        }
         self.ensure_connectors_active(&sp.plan).await?;
         let source = self.connect_endpoint(&sp.plan.source).await?;
         let destination = self.connect_endpoint(&sp.plan.destination).await?;
@@ -1004,6 +1144,28 @@ impl App {
 
     pub async fn exceptions(&self, job_id: &str, limit: i64) -> MaResult<Vec<ma_persistence::ExceptionRow>> {
         self.store.exceptions(job_id, limit).await
+    }
+}
+
+/// Where `p` really is: symbolic links and `..` are resolved for the part that exists, and the
+/// part that does not exist yet is appended as written. A path that climbs (`..`) through a part
+/// that does not exist is refused, because where it leads cannot be known.
+fn real_path(p: &Path) -> MaResult<PathBuf> {
+    let invalid = || MaError::validation(format!("invalid path `{}`", p.display()));
+    let abs = std::path::absolute(p).map_err(|_| invalid())?;
+    let mut missing: Vec<std::ffi::OsString> = vec![];
+    let mut cur = abs.as_path();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(cur) {
+            return Ok(missing.iter().rev().fold(real, |acc, part| acc.join(part)));
+        }
+        match (cur.file_name(), cur.parent()) {
+            (Some(name), Some(parent)) => {
+                missing.push(name.to_os_string());
+                cur = parent;
+            }
+            _ => return Err(invalid()),
+        }
     }
 }
 

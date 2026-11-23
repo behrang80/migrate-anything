@@ -12,6 +12,7 @@
   <img alt="Rust 1.100+" src="https://img.shields.io/badge/rust-1.100%2B-00c853?style=flat-square&labelColor=020604">
   <img alt="Runs locally" src="https://img.shields.io/badge/runs-100%25%20on%20your%20machine-00c853?style=flat-square&labelColor=020604">
   <img alt="MCP server included" src="https://img.shields.io/badge/MCP-server%20included-00c853?style=flat-square&labelColor=020604">
+  <img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-00c853?style=flat-square&labelColor=020604">
   <img alt="Status: release candidate" src="https://img.shields.io/badge/status-v1.0.0--rc.1-ffd166?style=flat-square&labelColor=020604">
 </p>
 
@@ -181,12 +182,16 @@ or any MCP client can do the legwork: explore both systems, build a connector fo
 never seen, propose the mapping, run the test run and start approved jobs.
 
 ```sh
-claude mcp add migrate-anything -- migrate-anything mcp serve
+claude mcp add migrate-anything -- migrate-anything mcp serve --allow-dir ./exports
 ```
 
 ```json
-{ "mcpServers": { "migrate-anything": { "command": "migrate-anything", "args": ["mcp", "serve"] } } }
+{ "mcpServers": { "migrate-anything": { "command": "migrate-anything", "args": ["mcp", "serve", "--allow-dir", "C:/data/exports"] } } }
 ```
+
+`--allow-dir` names a folder the assistant may add as a file connection: to read from, or to
+write to once you have approved a plan. Repeat it for more folders. Leave it out and the
+assistant can only use connections you added yourself.
 
 Then ask in plain words:
 
@@ -194,8 +199,10 @@ Then ask in plain words:
 > connectors you need, keep relationships and custom fields, and show me the plan before anything
 > is written.
 
-The assistant **cannot approve**, read stored credentials, or point an existing connection
-somewhere else. You approve in Studio or with `migrate-anything plan approve <plan-id>`.
+The assistant **cannot approve**, read stored credentials, or change a connection you made. On
+its own it can only add folders you opened with `--allow-dir` and public web APIs; databases and
+anything on your local network are yours to add. You approve in Studio or with
+`migrate-anything plan approve <plan-id>`.
 
 ## Command line
 
@@ -317,6 +324,6 @@ authenticated MCP · optional AI mapping providers that see metadata only · rea
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
-**License:** not chosen yet. Until the owner decides, all rights are reserved (see
-[LICENSE](LICENSE) and [docs/LICENSE_DECISION_CHECKLIST.md](docs/LICENSE_DECISION_CHECKLIST.md)).
-This project is not described as open source.
+**License:** [Apache-2.0](LICENSE). You may use, change and redistribute Migrate Anything, also
+commercially, as long as you keep the license and the [NOTICE](NOTICE) file. It comes without
+warranty. Contributions are accepted under the same license.

@@ -205,7 +205,8 @@ take/return `ma-types` structs so a PostgreSQL implementation can be added behin
 
 * `migrate-anything` or `migrate-anything ui` — Studio: local web interface on 127.0.0.1
   (`demo` additionally prepares a synthetic demo migration).
-* `migrate-anything mcp serve` — stdio MCP server.
+* `migrate-anything mcp serve [--allow-dir <folder>]...` — stdio MCP server. The folders are the
+  only local paths an agent may register or read documents from.
 * `migrate-anything worker run --job <id>` — executes one job; started detached by the MCP server
   or CLI (`jobs start`). Takes a lease; exits on completion, pause or cancel.
 * `migrate-anything jobs resume <id>` — clears the pause flag and starts a new worker that

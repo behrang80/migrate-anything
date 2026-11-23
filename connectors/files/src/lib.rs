@@ -268,8 +268,10 @@ impl FileConnector {
         for (k, v) in raw {
             let v = match (self.settings.format, v) {
                 (FileFormat::Csv, Value::String(s)) => {
+                    // The column type was inferred from the first rows only: a later cell that the
+                    // type would alter (`01067`, `+46...`, a date with a time) is kept as written.
                     let ty = def.field(&k).map(|f| f.field_type).unwrap_or(FieldType::String);
-                    Value::parse_as(&s, ty)
+                    Value::parse_lossless(&s, ty)
                 }
                 (_, v) => v,
             };

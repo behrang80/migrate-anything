@@ -3,7 +3,7 @@ name = "ma-core"
 description = "Universal application core: the single service layer used by the CLI and the MCP server."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

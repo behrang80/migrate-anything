@@ -3,7 +3,7 @@ name = "ma-connector-factory"
 description = "System discovery and declarative connector generation from OpenAPI documents."
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

@@ -76,13 +76,20 @@ pub async fn run_contract_tests(conn: &RestConnector, manifest: &mut CapabilityM
                 Ok(second) => {
                     let ids1: std::collections::BTreeSet<_> = first.records.iter().map(|r| r.id.clone()).collect();
                     let overlap = second.records.iter().filter(|r| ids1.contains(&r.id)).count();
-                    let ok = overlap == 0 && !second.records.is_empty();
+                    // An empty second page is not a failure: offset- and page-numbered listings
+                    // end on an empty page, so a small collection has nothing after its first
+                    // page. It just proves nothing about paging either.
+                    let ok = overlap == 0;
                     push(
                         format!("{}: pagination", r.name),
                         ok,
-                        format!("second page {} record(s), {overlap} repeated", second.records.len()),
+                        if second.records.is_empty() {
+                            "no further records after the first page (paging not exercised)".into()
+                        } else {
+                            format!("second page {} record(s), {overlap} repeated", second.records.len())
+                        },
                     );
-                    if ok {
+                    if ok && !second.records.is_empty() {
                         manifest.set_object(&r.name, "pagination", Evidence::Verified, None);
                         manifest.set("pagination", Evidence::Verified, None);
                     }

@@ -7,8 +7,10 @@ release published**. Studio (the web interface) was added after the first candid
 
 Functionally ready for owner review as a release candidate. All six mandatory demonstrations and
 all automated tests pass locally on Windows with a real PostgreSQL server; the 1,000,000-record
-benchmark runs and verifies. **Open before a public release:** license decision, CI/Docker runs on
-GitHub (not executable here), Linux/macOS verification, dependency audit execution.
+benchmark runs and verifies. The license is decided (Apache-2.0) and the findings of the second
+code review are fixed. **Open before a public release:** push these fixes and see CI pass
+completely (the secret scan has not run yet, see below); build the Docker image; open Studio by
+hand on Linux and macOS; third-party notices for binary downloads; the owner's own run-through.
 
 ## Environment used
 
@@ -24,35 +26,36 @@ GitHub (not executable here), Linux/macOS verification, dependency audit executi
 |---|---|
 | `cargo fmt --all -- --check` | ✅ clean |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ clean |
-| `MA_TEST_PG_URL=postgres://ma_test@127.0.0.1:55432/postgres cargo test --workspace` | ✅ **82 passed, 0 failed** (74 in the first candidate; 4 regression tests added with the code-review fixes; 1 mapping test and 3 Studio end-to-end tests added with Studio) |
+| `MA_TEST_PG_URL=postgres://ma_test@127.0.0.1:55432/postgres cargo test --workspace --locked` | ✅ **96 passed, 0 failed** (74 in the first candidate; 4 regression tests with the first code-review fixes; 1 mapping test and 3 Studio end-to-end tests with Studio; 14 regression tests with the second code-review fixes) |
 | `cargo run -p ma-bench --release` | ✅ all scenarios verified (see below) |
 | `migrate-anything doctor` | ✅ all checks ok (state DB, keys, sandbox self-test) |
 | README quickstart via the CLI binary (fresh workspace) | ✅ discovery, suggestion, plan, dry run; approval and job start correctly **refused** in a non-interactive shell (the interactive approval step must be performed by a human) |
 | Studio in a browser (Chromium): demo from start to verified report, adding file / PostgreSQL / web API connections, connector generation, mapping edits, plan and test run, phone-width layout, animation toggle | ✅ checked by hand on a test build with synthetic data. Pause/resume and the approval rules are covered by `studio_ui.rs`; the Pause, Resume and Cancel buttons themselves were not clicked in a browser |
-| `cargo audit`, `cargo deny`, gitleaks | ⚠️ configured in CI, **not executed** locally (tools not installed); license inventory checked manually via `cargo metadata` — all permissive |
-| GitHub Actions (Linux/macOS/Windows matrix, Postgres service, release builds) | ⚠️ started by the push to the private repository; **result not checked** |
+| `cargo deny check licenses bans sources` (cargo-deny 0.22.0) | ✅ run locally: bans ok, licenses ok, sources ok |
+| `cargo audit`, gitleaks | ⚠️ **not executed** locally. In CI, `cargo audit` reported one warning (`chrono` flagged as unmaintained, RUSTSEC-2026-0543, no fixed version). The gitleaks secret scan has **not run yet**: it is the step after the license check, which failed in both CI runs so far |
+| GitHub Actions on the Studio commit, 2026-11-23 (before the fixes of this pass) | ✅ lint; tests on Ubuntu, Windows and macOS; PostgreSQL end-to-end; release builds for Linux x86-64, Windows x86-64 and macOS arm64; benchmark smoke. ❌ security job: the license and banned-crates check failed (workspace crates had no license). Fixed in this pass and passing locally; **not yet re-run in CI** |
 
-### Test inventory (82)
+### Test inventory (96)
 
 | Suite | Tests |
 |---|---|
-| ma-types (values, lossless JSON, hashing, property tests) | 10 |
+| ma-types (values, lossless reading of inferred columns, lossless JSON, hashing, property tests) | 11 |
 | ma-security (encryption binding, SSRF policy, redaction) | 3 |
 | ma-persistence (restart durability, leases) | 3 |
 | ma-connector-sdk, ma-planning, ma-validation | 3 |
 | ma-mapping (runtime, suggestions incl. Customer→Account example and key guessing, property test) | 8 |
 | ma-sandbox (imports rejected, fuel, deadline, memory, OOB output) | 6 |
 | ma-connector-factory (spec validation, malicious specs) | 2 |
-| ma-connector-files (streaming, nested JSON, resume truncation, overwrite refusal, traversal) | 5 |
+| ma-connector-files (streaming, nested JSON, rows beyond the type sample, resume truncation, overwrite refusal, traversal) | 6 |
 | ma-connector-postgres (1 unit + 9 integration incl. 2 regression tests) | 10 |
-| ma-connector-rest (a create that failed in flight is not sent again) | 1 |
+| ma-connector-rest (a create that failed in flight is not sent again; capped page sizes, ignored paging, pages past the end, oversized responses) | 6 |
 | ma-example-api (fixture API) | 8 |
 | Demo 1 CRM | 1 |
 | Demo 2 Finance | 1 |
 | Demo 3 PostgreSQL → PostgreSQL | 1 |
 | Demo 4 Unknown system | 1 |
-| Demo 5 Interrupted (fault-injected crash, external kill, pause/resume/cancel, Postgres crash) | 4 |
-| Demo 6 Security (12 scenarios incl. a real MCP stdio session) | 12 |
+| Demo 5 Interrupted (fault-injected crash, external kill, pause/resume/cancel, Postgres crash, approval expired or revoked mid-migration, in-flight check that cannot be answered, detached worker) | 7 |
+| Demo 6 Security (16 scenarios incl. two real MCP stdio sessions; agent limits on folders, databases, private network and connector replacement; dry run bound to the planned system) | 16 |
 | Studio end to end over HTTP (sign-in to verified report, pause/resume, no approval without a terminal) | 3 |
 
 ## Demonstrations — measured outcomes
@@ -118,15 +121,18 @@ lease heartbeat and the download cap have **no dedicated test**.
 
 GraphQL/other databases/Excel/XML connectors; OAuth 2.0; OpenAPI 2.0; attachment transfer;
 external LLM mapping providers (trait exists, none shipped); remote MCP; PostgreSQL state backend;
-process-isolated extensions (fails closed instead); Polars comparison benchmark; CI/Docker
-execution; Linux/macOS verification; final license.
+process-isolated extensions (fails closed instead); Polars comparison benchmark; Docker build;
+Studio opened by hand on Linux/macOS (the automated tests pass there in CI); third-party notices
+for binary downloads.
 
 ## Next steps for the owner
 
 1. Run `migrate-anything plan approve <plan>` once yourself to experience the approval flow
    (it requires your interactive terminal by design).
-2. Decide the license (docs/LICENSE_DECISION_CHECKLIST.md).
-3. Look at the CI run on GitHub (multi-OS tests, audit, deny, gitleaks, release artifacts); it
-   was started by the push and has not been checked.
+2. The license is Apache-2.0. Go through what is still open in
+   docs/LICENSE_DECISION_CHECKLIST.md (third-party notices for binaries, the name as a trademark,
+   who holds the rights) before the repository is made public.
+3. Push the fixes of this pass and look at the CI run: the license check should now pass, and the
+   secret scan after it will run for the first time.
 4. Start `studio.cmd demo`, approve with the code from the terminal and watch a run: this is
    the one path only a person can exercise end to end in a browser.

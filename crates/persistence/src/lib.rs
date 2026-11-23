@@ -716,6 +716,20 @@ impl Store {
             .ok_or_else(|| MaError::not_found(format!("job `{job_id}` not found")))
     }
 
+    /// Bind a job to another approval of the same plan. Used when the approval a job started
+    /// under expired or was revoked while the job was not running and the operator has
+    /// approved the plan again.
+    pub async fn set_job_approval(&self, job_id: &str, approval_id: &str) -> DbResult<()> {
+        sqlx::query("UPDATE jobs SET approval_id=? WHERE workspace_id=? AND job_id=?")
+            .bind(approval_id)
+            .bind(&self.ws)
+            .bind(job_id)
+            .execute(&self.pool)
+            .await
+            .db()?;
+        Ok(())
+    }
+
     pub async fn list_jobs(&self) -> DbResult<Vec<(String, String, String, String)>> {
         let rows = sqlx::query("SELECT job_id, plan_id, status, created_at FROM jobs WHERE workspace_id=? ORDER BY created_at DESC")
             .bind(&self.ws)

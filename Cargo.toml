@@ -26,7 +26,7 @@ default-members = ["apps/cli", "apps/mcp-server"]
 [workspace.package]
 version = "1.0.0-rc.1"
 edition = "2024"
-license-file = "LICENSE"
+license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]

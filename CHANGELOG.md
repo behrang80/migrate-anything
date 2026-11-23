@@ -90,6 +90,10 @@ First release candidate.
 * Connector contract tests failed the pagination check for collections that fit on one page.
 * CI: the license and banned-crates check failed because workspace crates had no license and
   depend on each other by path.
+* CI: the secret scan failed on every push with more than one commit, because the checkout did
+  not contain the commit before the push, and nothing scanned earlier commits. The security job
+  now fetches the full history, and a separate workflow (`secret-scan.yml`) scans every commit
+  weekly and on demand.
 
 ### Fixed after code review
 * Security: an approved job followed a connection that had been re-pointed after approval. Jobs,
